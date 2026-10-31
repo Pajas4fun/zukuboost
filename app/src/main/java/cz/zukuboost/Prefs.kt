@@ -126,6 +126,13 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("paused", v).commit()
         }
 
+    /** Naposledy vybraná hra na domovské obrazovce. */
+    var lastGame: String?
+        get() = sp.getString("last_game", null)
+        set(v) {
+            sp.edit().putString("last_game", v).apply()
+        }
+
     var lastSession: String
         get() = sp.getString("last_session", "") ?: ""
         set(v) {
@@ -138,6 +145,13 @@ class Prefs(ctx: Context) {
 
     fun setScale(pkg: String, v: Float) {
         sp.edit().putFloat("scale_$pkg", v).apply()
+    }
+
+    /** Původní (výrobcem nastavená) konfigurace game_overlay pro hru – "null" = žádná. */
+    fun gameOverlayBackup(pkg: String): String? = sp.getString("go_backup_$pkg", null)
+
+    fun setGameOverlayBackup(pkg: String, v: String) {
+        sp.edit().putString("go_backup_$pkg", v).apply()
     }
 
     /** 0 = bez limitu. */

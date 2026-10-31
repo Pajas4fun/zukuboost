@@ -1,4 +1,4 @@
-# ⚡ ZukuBoost 1.3
+# ⚡ ZukuBoost 2.0
 
 Herní booster pro Android přes Shizuku / Shizuku Next. Bez rootu.
 
@@ -25,6 +25,16 @@ Po odchodu ze hry (3 s mimo hru) nebo zhasnutí displeje se vše vrátí.
 - **Skrytý výkonový režim Xiaomi:** tlačítko otevře systémový výběr Úspora / Vyvážený / Výkon
 - **Kontrola zápisu nastavení:** HyperOS vyžaduje v Možnostech pro vývojáře zapnout
   *Ladění USB (Bezpečnostní nastavení)*, jinak shell nemůže měnit systémová nastavení
+
+## 2.0 – nový herní vzhled
+- **Domů (Game Space):** výběr hry, profil hry, velké tlačítko **SPUSTIT S BOOSTEM**
+  (úklid paměti → zapnutí auto boostu → spuštění hry), živá teplota a volná RAM
+- Spodní navigace: Domů · Hry · Kill list · Historie · **Nastavení** (vlastní kategorie se sekcemi
+  Připojení, Automatika, Při hraní, Xiaomi, Obnova)
+
+## 1.4
+- FPS limit a rozlišení teď přes `device_config game_overlay` (postup z dokumentace Androidu), záloha konfigurace výrobce
+- **Herní GPU ovladač** pro každou hru (jen telefony s aktualizovatelným ovladačem)
 
 ## Navíc
 - **Joyose (Xiaomi):** vypnutí služby, která podle cloudových profilů omezuje výkon her

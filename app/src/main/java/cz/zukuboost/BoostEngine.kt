@@ -2,6 +2,7 @@ package cz.zukuboost
 
 import android.content.ContentResolver
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.os.Build
@@ -92,12 +93,18 @@ object BoostEngine {
         return rates.filter { it.roundToInt() % cap == 0 }.maxOrNull() ?: max
     }
 
+    private val CFG_RE = Regex("^[A-Za-z0-9=,.:_-]+$")
+    private const val DRIVER_KEY = "updatable_driver_production_opt_in_apps"
+
+    /**
+     * Game Mode intervence podle dokumentace Androidu: konfigurace se zapisuje do
+     * device_config game_overlay (mode=2 = výkon), pak se hra přepne do performance režimu.
+     */
     private fun gameConfigCmd(pkg: String, scale: Float, cap: Int): String {
-        if (scale >= 0.99f && cap <= 0) return "cmd game reset $pkg"
-        val parts = mutableListOf("cmd game set --mode 2")
-        if (scale < 0.99f) parts += "--downscale " + String.format(Locale.US, "%.1f", scale)
-        if (cap > 0) parts += "--fps $cap"
-        return "cmd game reset $pkg; ${parts.joinToString(" ")} $pkg"
+        val cfg = mutableListOf("mode=2")
+        if (scale < 0.99f) cfg += "downscaleFactor=" + String.format(Locale.US, "%.2f", scale)
+        if (cap > 0) cfg += "fps=$cap"
+        return "device_config put game_overlay $pkg ${cfg.joinToString(",")}; cmd game mode performance $pkg"
     }
 
     suspend fun apply(ctx: Context, pkg: String) {
@@ -186,6 +193,15 @@ object BoostEngine {
         }
     }
 
+    /** Úklid těsně před spuštěním hry z domovské obrazovky – víc volné RAM při načítání. */
+    suspend fun preLaunchClean(ctx: Context, pkg: String): Int {
+        val p = Prefs(ctx)
+        val targets = safe(p.killList - pkg - ctx.packageName - SHIZUKU_PKG)
+        val cmds = targets.map { "am force-stop $it" } + "am kill-all"
+        Shell.exec(cmds.joinToString("; "))
+        return targets.size
+    }
+
     suspend fun restore(ctx: Context) {
         val p = Prefs(ctx)
         if (!p.boostActive) return
@@ -235,24 +251,85 @@ object BoostEngine {
     }
 
     /** Profil hry: render rozlišení (víc FPS, méně tepla) a FPS limit (stabilní snímky). Android 13+. */
-    suspend fun setGameConfig(pkg: String, scale: Float, cap: Int): String {
+    suspend fun setGameConfig(ctx: Context, pkg: String, scale: Float, cap: Int): String {
         if (!PKG_RE.matches(pkg)) return "Neplatný balíček"
         if (Build.VERSION.SDK_INT < 33) return "Potřebuje Android 13+"
+        val p = Prefs(ctx)
+        // Záloha konfigurace od výrobce, ať ji při vypnutí vrátíme místo smazání
+        if (p.gameOverlayBackup(pkg) == null) {
+            val cur = Shell.exec("device_config get game_overlay $pkg").trim()
+            p.setGameOverlayBackup(pkg, if (CFG_RE.matches(cur)) cur else "null")
+        }
+        if (scale >= 0.99f && cap <= 0) {
+            val orig = p.gameOverlayBackup(pkg)
+            val restore = if (orig == null || orig == "null") {
+                "device_config delete game_overlay $pkg"
+            } else {
+                "device_config put game_overlay $pkg $orig"
+            }
+            return Shell.exec("$restore; cmd game reset $pkg 2>/dev/null").trim()
+        }
         return Shell.exec(gameConfigCmd(pkg, scale, cap)).trim()
     }
 
-    /** null = Joyose na zařízení není, true = zapnutý, false = vypnutý. */
-    fun joyoseState(ctx: Context): Boolean? = try {
-        val s = ctx.packageManager.getApplicationEnabledSetting(JOYOSE)
-        s != PackageManager.COMPONENT_ENABLED_STATE_DISABLED &&
-            s != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
-    } catch (e: IllegalArgumentException) {
-        null
+    /** Má telefon aktualizovatelný (herní) GPU ovladač? */
+    suspend fun gameDriverSupported(): Boolean = Shell.exec("getprop ro.gfx.driver.0").trim().isNotEmpty()
+
+    suspend fun gameDriverApps(): Set<String> {
+        val cur = Shell.exec("settings get global $DRIVER_KEY").trim()
+        if (cur.isBlank() || cur == "null") return emptySet()
+        return cur.split(",").map { it.trim() }.filter { PKG_RE.matches(it) }.toSet()
     }
 
-    suspend fun setJoyose(enabled: Boolean): String = Shell.exec(
-        if (enabled) "pm enable $JOYOSE" else "am force-stop $JOYOSE; pm disable-user --user 0 $JOYOSE"
-    ).trim()
+    /** Přepne hru na herní GPU ovladač (projeví se po restartu hry). */
+    suspend fun setGameDriver(pkg: String, on: Boolean): String {
+        if (!PKG_RE.matches(pkg)) return "Neplatný balíček"
+        val list = gameDriverApps().toMutableSet()
+        if (on) list += pkg else list -= pkg
+        val value = list.joinToString(",")
+        val out = Shell.exec(
+            if (value.isEmpty()) "settings delete global $DRIVER_KEY" else "settings put global $DRIVER_KEY $value"
+        )
+        return when {
+            out.contains("Exception") -> out.trim()
+            on -> "Herní GPU ovladač zapnutý – restartuj hru"
+            else -> "Výchozí GPU ovladač – restartuj hru"
+        }
+    }
+
+    /** null = Joyose na zařízení není, true = zapnutý, false = vypnutý nebo odebraný pro uživatele. */
+    @Suppress("DEPRECATION")
+    fun joyoseState(ctx: Context): Boolean? {
+        val ai = try {
+            ctx.packageManager.getApplicationInfo(
+                JOYOSE,
+                PackageManager.MATCH_UNINSTALLED_PACKAGES or PackageManager.MATCH_DISABLED_COMPONENTS,
+            )
+        } catch (e: PackageManager.NameNotFoundException) {
+            return null
+        }
+        if ((ai.flags and ApplicationInfo.FLAG_INSTALLED) == 0) return false
+        return ai.enabled
+    }
+
+    /**
+     * HyperOS nedovolí shellu systémové balíčky vypnout (disable-user),
+     * proto při chybě Joyose odebereme jen pro uživatele 0. Vrátí se přes install-existing.
+     */
+    suspend fun setJoyose(enabled: Boolean): String {
+        if (enabled) {
+            val out = Shell.exec("cmd package install-existing --user 0 $JOYOSE; pm enable $JOYOSE")
+            return if (out.contains("Exception")) out.trim() else "Joyose je zpět zapnutý"
+        }
+        val first = Shell.exec("am force-stop $JOYOSE; pm disable-user --user 0 $JOYOSE")
+        if (!first.contains("Exception")) return "Joyose vypnutý"
+        val second = Shell.exec("am force-stop $JOYOSE; pm uninstall -k --user 0 $JOYOSE")
+        return if (second.contains("Success")) {
+            "Joyose odebrán pro tvého uživatele. Vrátíš ho tlačítkem Zapnout Joyose zpět."
+        } else {
+            "Nepodařilo se: ${second.trim()}"
+        }
+    }
 
     /**
      * HyperOS blokuje shellu zápis do systémových nastavení, dokud není v Možnostech pro vývojáře
@@ -275,16 +352,26 @@ object BoostEngine {
         return if (out.contains("Error") || out.contains("Exception")) "Tenhle firmware skryté menu nemá" else "Otevřeno"
     }
 
-    /** Udělí appce přes Shizuku všechna oprávnění, která potřebuje. */
+    /** Udělí appce přes Shizuku všechna oprávnění, která potřebuje. Vrací výsledek včetně chyb systému. */
     suspend fun grantSelf(ctx: Context): String {
         val me = ctx.packageName
         val cmds = mutableListOf(
+            // Přístup k využití dvěma cestami: appops i „development“ oprávnění přes pm grant
             "cmd appops set $me GET_USAGE_STATS allow",
+            "pm grant $me android.permission.PACKAGE_USAGE_STATS",
             "cmd appops set $me SYSTEM_ALERT_WINDOW allow",
             "cmd appops set $me RUN_ANY_IN_BACKGROUND allow",
             "dumpsys deviceidle whitelist +$me",
         )
         if (Build.VERSION.SDK_INT >= 33) cmds += "pm grant $me android.permission.POST_NOTIFICATIONS"
-        return Shell.exec(cmds.joinToString("; "))
+        val out = Shell.exec(cmds.joinToString("; "))
+        val errors = out.lines().map { it.trim() }.filter {
+            it.contains("Exception") || it.startsWith("Error") || it.contains("not allowed", ignoreCase = true)
+        }
+        return if (errors.isEmpty()) {
+            "Oprávnění nastavena"
+        } else {
+            "Systém část odmítl: ${errors.first().take(140)} – povol to ručně tlačítky níž"
+        }
     }
 }
