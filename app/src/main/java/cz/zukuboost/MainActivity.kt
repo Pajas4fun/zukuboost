@@ -13,6 +13,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,6 +72,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -167,6 +172,11 @@ private fun nextScale(cur: Float): Float {
     return SCALES[(i + 1) % SCALES.size]
 }
 
+private fun nextCap(cur: Int, options: List<Int>): Int {
+    val i = options.indexOf(cur)
+    return options[(i + 1) % options.size]
+}
+
 // ---------- UI ----------
 
 private val Accent = Color(0xFFFF5A36)
@@ -199,6 +209,13 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
     var busy by remember { mutableStateOf<String?>(null) }
     var recheck by remember { mutableIntStateOf(0) }
     val scales = remember { mutableStateMapOf<String, Float>() }
+    val caps = remember { mutableStateMapOf<String, Int>() }
+    var historyTick by remember { mutableIntStateOf(0) }
+    val history = remember(tick, recheck, historyTick) { prefs.history() }
+    val capOptions = remember {
+        val maxHz = BoostEngine.refreshRates(ctx).maxOrNull()?.roundToInt() ?: 60
+        listOf(0, 30, 45, 60, 90, 120, 144).filter { it == 0 || it <= maxHz }
+    }
     val opts = remember { mutableStateMapOf<Opt, Boolean>().apply { Opt.entries.forEach { put(it, prefs.opt(it)) } } }
     val apps by produceState<List<AppItem>?>(initialValue = null) {
         value = withContext(Dispatchers.IO) { loadApps(ctx) }
@@ -209,6 +226,7 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
     val overlayOk = remember(tick, shizuku, recheck) { Settings.canDrawOverlays(ctx) }
     val joyose = remember(tick, recheck) { BoostEngine.joyoseState(ctx) }
     val paused = remember(tick, recheck) { prefs.paused }
+    var writeOk by remember { mutableIntStateOf(prefs.settingsWriteOk) }
     val lastSession = remember(tick, recheck) { prefs.lastSession }
 
     // Hlídání se samo obnoví, pokud bylo zapnuté (po restartu, po zabití systémem…)
@@ -218,6 +236,10 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
             delay(500)
         }
         monitorOn = GameMonitorService.running
+        // Zjistíme, jestli HyperOS dovoluje zápis do systémových nastavení
+        if (shizuku == Shell.State.READY) {
+            writeOk = if (runCatching { BoostEngine.checkSettingsWrite(ctx) }.getOrDefault(false)) 1 else 0
+        }
     }
 
     fun toast(msg: String) {
@@ -249,7 +271,7 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                 modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 8.dp),
             )
             TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.background) {
-                listOf("Boost", "Hry (${games.size})", "Kill list (${killList.size})").forEachIndexed { i, t ->
+                listOf("Boost", "Hry", "Kill list", "Historie").forEachIndexed { i, t ->
                     Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t) })
                 }
             }
@@ -293,6 +315,20 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                         InfoCard("Oprávnění") {
                             Text(if (usageOk) "✅ Detekce her (přístup k využití)" else "❌ Detekce her (přístup k využití)")
                             Text(if (overlayOk) "✅ Overlay přes hru" else "❌ Overlay přes hru")
+                            when (writeOk) {
+                                1 -> Text("✅ Zápis systémových nastavení")
+                                0 -> {
+                                    Text("❌ Zápis systémových nastavení je blokovaný")
+                                    Text(
+                                        "HyperOS ho povolí až po zapnutí: Nastavení → Další nastavení → Možnosti pro vývojáře → " +
+                                            "Ladění USB (Bezpečnostní nastavení). Vyžaduje přihlášený Xiaomi účet a SIM kartu. " +
+                                            "Bez toho nefunguje Hz, Nerušit, spořič ani Xiaomi výkonový profil. Pak se sem vrať.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFFFB300),
+                                    )
+                                }
+                                else -> Unit
+                            }
                             Spacer(Modifier.height(8.dp))
                             Button(enabled = ready && busy == null, onClick = {
                                 runTask("Nastavuji oprávnění…") {
@@ -368,10 +404,23 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                     val joyoseOn = joyose
                     if (joyoseOn != null) {
                         item {
-                            InfoCard("Xiaomi: Joyose") {
+                            InfoCard("Xiaomi: výkon") {
+                                Text(
+                                    "Skrytý výběr výkonového režimu Xiaomi (Úspora / Vyvážený / Výkon). Nastavení vydrží i po hře.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedButton(enabled = ready && busy == null, onClick = {
+                                    runTask("Otevírám…") { BoostEngine.openXiaomiPowerMenu() }
+                                }) { Text("Otevřít výkonový režim Xiaomi") }
+                                Spacer(Modifier.height(16.dp))
+                                Text("Joyose", fontWeight = FontWeight.Bold)
                                 Text(
                                     "Systémová služba Xiaomi, která podle cloudových profilů omezuje výkon a FPS ve hrách. " +
-                                        "Vypnutí může na některých telefonech zvednout výkon, ale i teploty. Jde kdykoliv vrátit.",
+                                        "Vypnutí může na některých telefonech zvednout výkon, ale i teploty. " +
+                                        "Pozor: Joyose na některých modelech povoluje i režim vysokých FPS – když po vypnutí " +
+                                        "hra spadne na 60 FPS, zapni ho zpět.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -387,12 +436,21 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                         }
                     }
                     item {
-                        Text(
-                            "Co se zapne při hraní",
-                            fontWeight = FontWeight.Bold,
-                            color = Accent,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
+                        Column {
+                            Text(
+                                "Co se zapne při hraní",
+                                fontWeight = FontWeight.Bold,
+                                color = Accent,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            Text(
+                                "Proti propadům FPS nejvíc pomáhá FPS limit na hodnotu, kterou hra udrží i zahřátá " +
+                                    "(nastavíš v záložce Hry), vypnutý Joyose a stabilní výkon. Hlavní příčina propadů je teplo.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                        }
                     }
                     items(Opt.entries.toList(), key = { it.key }) { o ->
                         OptionRow(o, opts[o] == true) { v ->
@@ -471,7 +529,7 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                     },
                     extra = { app ->
                         if (app.pkg in games) {
-                            Row {
+                            Row(Modifier.horizontalScroll(rememberScrollState())) {
                                 TextButton(
                                     enabled = ready && busy == null,
                                     contentPadding = PaddingValues(horizontal = 6.dp),
@@ -482,22 +540,42 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                                     },
                                 ) { Text("Kompilovat", style = MaterialTheme.typography.labelMedium) }
                                 if (Build.VERSION.SDK_INT >= 33) {
-                                    val cur = scales[app.pkg] ?: prefs.scale(app.pkg)
+                                    val curScale = scales[app.pkg] ?: prefs.scale(app.pkg)
+                                    val curCap = caps[app.pkg] ?: prefs.fpsCap(app.pkg)
                                     TextButton(
                                         enabled = ready && busy == null,
                                         contentPadding = PaddingValues(horizontal = 6.dp),
                                         onClick = {
-                                            val next = nextScale(cur)
+                                            val next = nextCap(curCap, capOptions)
+                                            caps[app.pkg] = next
+                                            prefs.setFpsCap(app.pkg, next)
+                                            runTask("Nastavuji FPS limit…") {
+                                                val out = BoostEngine.setGameConfig(app.pkg, curScale, next)
+                                                val name = if (next == 0) "vypnutý" else "$next FPS"
+                                                "FPS limit $name: ${out.ifBlank { "OK" }}"
+                                            }
+                                        },
+                                    ) {
+                                        Text(
+                                            if (curCap == 0) "FPS limit: vyp" else "FPS limit: $curCap",
+                                            style = MaterialTheme.typography.labelMedium,
+                                        )
+                                    }
+                                    TextButton(
+                                        enabled = ready && busy == null,
+                                        contentPadding = PaddingValues(horizontal = 6.dp),
+                                        onClick = {
+                                            val next = nextScale(curScale)
                                             scales[app.pkg] = next
                                             prefs.setScale(app.pkg, next)
                                             runTask("Nastavuji rozlišení…") {
-                                                val out = BoostEngine.setDownscale(app.pkg, next)
+                                                val out = BoostEngine.setGameConfig(app.pkg, next, curCap)
                                                 "Rozlišení ${(next * 100).roundToInt()} %: ${out.ifBlank { "OK" }}"
                                             }
                                         },
                                     ) {
                                         Text(
-                                            "Rozlišení ${(cur * 100).roundToInt()} %",
+                                            "Rozlišení ${(curScale * 100).roundToInt()} %",
                                             style = MaterialTheme.typography.labelMedium,
                                         )
                                     }
@@ -507,7 +585,7 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                     },
                 )
 
-                else -> AppList(
+                2 -> AppList(
                     apps = apps,
                     selected = killList,
                     exclude = games,
@@ -518,6 +596,11 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                         prefs.killList = killList
                     },
                 )
+
+                else -> HistoryList(history) {
+                    prefs.clearHistory()
+                    historyTick++
+                }
             }
         }
     }
@@ -626,6 +709,54 @@ fun AppList(
                         Checkbox(checked = checked, onCheckedChange = { onToggle(app.pkg, it) })
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun HistoryList(history: List<Session>, onClear: () -> Unit) {
+    val fmt = remember { SimpleDateFormat("d. M. HH:mm", Locale.forLanguageTag("cs")) }
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Column {
+                Text(
+                    "Každá hra delší než minuta se tu zapíše. Zahraj si stejnou hru s Game Turbem a se ZukuBoostem " +
+                        "a porovnej ø FPS, minimum a propady (⚠ = FPS kleslo pod 75 % průměru).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (history.isNotEmpty()) {
+                    TextButton(onClick = onClear, contentPadding = PaddingValues(0.dp)) { Text("Smazat historii") }
+                }
+            }
+        }
+        if (history.isEmpty()) {
+            item { Text("Zatím žádné záznamy.", modifier = Modifier.padding(top = 16.dp)) }
+        }
+        items(history, key = { "${it.pkg}_${it.start}" }) { h ->
+            InfoCard(h.label) {
+                Text("${fmt.format(Date(h.start))} · ${h.minutes} min", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    buildString {
+                        append("ø ").append(h.avg?.toString() ?: "--").append(" FPS")
+                        append("   min ").append(h.min?.toString() ?: "--")
+                        append("   ⚠ propady ").append(h.drops)
+                    },
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    buildString {
+                        append("CPU max ").append(h.maxCpu?.let { "${it.roundToInt()} °C" } ?: "--")
+                        append("   baterie max ").append(h.maxBat?.let { String.format(Locale.US, "%.1f °C", it) } ?: "--")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

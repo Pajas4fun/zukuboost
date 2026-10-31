@@ -2,15 +2,36 @@ package cz.zukuboost
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class Opt(val key: String, val title: String, val desc: String, val default: Boolean) {
     KILL_BG("opt_kill", "Vyčistit pozadí", "Při startu hry ukončí aplikace z kill listu a uvolní procesy v cache.", true),
     RESTRICT_BG("opt_restrict", "Držet kill list mimo pozadí", "Aplikace z kill listu se během hraní nemůžou samy znovu spustit na pozadí.", true),
+    SYSTEM_HOGS(
+        "opt_hogs",
+        "Utlumit systémové žrouty",
+        "Zastaví aktualizace z Obchodu Play / GetApps, analytiku a reklamy Xiaomi, skenování galerie a optimalizaci appek na pozadí. Časté příčiny náhlých záseků.",
+        true,
+    ),
+    SYNC_OFF("opt_sync", "Vypnout synchronizaci účtů", "Google, e-mail a cloud během hraní nesynchronizují (žádné náhlé zátěže úložiště). Po hře se vrátí.", true),
     DND("opt_dnd", "Režim Nerušit", "Během hraní zapne Nerušit (projdou jen prioritní hovory).", true),
-    HEADS_UP("opt_headsup", "Blokovat vyskakovací oznámení", "Žádné bannery přes hru.", true),
-    REFRESH("opt_refresh", "Maximální Hz displeje", "Zamkne displej na nejvyšší Hz. Na Xiaomi přepíše i jeho vlastní klíče pro Hz.", true),
+    HEADS_UP("opt_headsup", "Blokovat vyskakovací oznámení", "Žádné bannery přes hru – každý banner navíc zatěžuje vykreslování.", true),
+    REFRESH("opt_refresh", "Hz displeje podle hry", "Bez FPS limitu maximální Hz. S limitem Hz, které jsou jeho násobkem (např. limit 45 → 90 Hz), aby snímky šly rovnoměrně.", true),
     BATTERY_SAVER("opt_saver", "Vypnout spořič baterie", "Spořič škrtí výkon, během hraní se vypne.", true),
     GAME_MODE("opt_gamemode", "Android Game Mode: výkon", "Přepne hru do performance režimu, pokud ho hra a systém podporují.", true),
+    XIAOMI_PERF(
+        "opt_xiaomiperf",
+        "Xiaomi výkonový profil (experimentální)",
+        "Během hraní přepne systémový profil Xiaomi na výkon (power_mode) a zapne režim vysokých FPS (speed_mode). Víc výkonu, víc tepla. Jen Xiaomi/Redmi/POCO.",
+        false,
+    ),
+    FIXED_PERF(
+        "opt_fixedperf",
+        "Stabilní výkon (fixed performance)",
+        "Nastaví CPU a GPU pevnou horní i dolní hranici taktů. Nezrychlí, ale srovná výkyvy – méně propadů. Funguje jen na části telefonů.",
+        false,
+    ),
     THERMAL(
         "opt_thermal",
         "Nehlásit hrám přehřátí",
@@ -19,8 +40,21 @@ enum class Opt(val key: String, val title: String, val desc: String, val default
         false,
     ),
     ANIMATIONS("opt_anim", "Vypnout systémové animace", "Rychlejší přechody v systému během hraní.", false),
-    OVERLAY("opt_overlay", "Overlay s FPS a teplotami", "Plovoucí ukazatel (FPS, ø/min FPS, CPU/GPU °C, příkon, čas). Dá se přetáhnout.", true),
+    MEASURE("opt_measure", "Měřit FPS a teploty", "Ukládá do Historie ø FPS, minimum, počet propadů a max. teploty každé hry.", true),
+    OVERLAY("opt_overlay", "Overlay ve hře", "Plovoucí ukazatel FPS, propadů, teplot a příkonu. Dá se přetáhnout.", true),
 }
+
+data class Session(
+    val pkg: String,
+    val label: String,
+    val start: Long,
+    val minutes: Long,
+    val avg: Int?,
+    val min: Int?,
+    val drops: Int,
+    val maxCpu: Float?,
+    val maxBat: Float?,
+)
 
 class Prefs(ctx: Context) {
     private val sp: SharedPreferences =
@@ -59,6 +93,26 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("thermal_override", v).commit()
         }
 
+    var fixedPerf: Boolean
+        get() = sp.getBoolean("fixed_perf", false)
+        set(v) {
+            sp.edit().putBoolean("fixed_perf", v).commit()
+        }
+
+    /** Stav synchronizace před hrou: -1 = nesahali jsme na ni, 0 = vypnutá, 1 = zapnutá. */
+    var syncWasOn: Int
+        get() = sp.getInt("sync_was", -1)
+        set(v) {
+            sp.edit().putInt("sync_was", v).commit()
+        }
+
+    /** Výsledek testu zápisu do systémových nastavení: -1 neznámo, 0 blokováno, 1 OK. */
+    var settingsWriteOk: Int
+        get() = sp.getInt("settings_write_ok", -1)
+        set(v) {
+            sp.edit().putInt("settings_write_ok", v).apply()
+        }
+
     var monitorEnabled: Boolean
         get() = sp.getBoolean("monitor_enabled", false)
         set(v) {
@@ -78,17 +132,30 @@ class Prefs(ctx: Context) {
             sp.edit().putString("last_session", v).apply()
         }
 
+    // ----- profil hry -----
+
     fun scale(pkg: String): Float = sp.getFloat("scale_$pkg", 1f)
 
     fun setScale(pkg: String, v: Float) {
         sp.edit().putFloat("scale_$pkg", v).apply()
     }
 
+    /** 0 = bez limitu. */
+    fun fpsCap(pkg: String): Int = sp.getInt("fps_$pkg", 0)
+
+    fun setFpsCap(pkg: String, v: Int) {
+        sp.edit().putInt("fps_$pkg", v).apply()
+    }
+
+    // ----- volby -----
+
     fun opt(o: Opt): Boolean = sp.getBoolean(o.key, o.default)
 
     fun setOpt(o: Opt, v: Boolean) {
         sp.edit().putBoolean(o.key, v).apply()
     }
+
+    // ----- uložené původní hodnoty -----
 
     fun saveOriginals(values: Map<String, String>) {
         val e = sp.edit()
@@ -106,8 +173,53 @@ class Prefs(ctx: Context) {
         sp.all.keys.filter { it.startsWith(ORIG) }.forEach { e.remove(it) }
         e.remove("restricted")
         e.remove("thermal_override")
+        e.remove("fixed_perf")
+        e.remove("sync_was")
         e.putBoolean("boost_active", false)
         e.commit()
+    }
+
+    // ----- historie -----
+
+    fun history(): List<Session> = runCatching {
+        val arr = JSONArray(sp.getString("history", "[]"))
+        (0 until arr.length()).map { i ->
+            val o = arr.getJSONObject(i)
+            Session(
+                pkg = o.getString("pkg"),
+                label = o.getString("label"),
+                start = o.getLong("start"),
+                minutes = o.getLong("minutes"),
+                avg = if (o.has("avg")) o.getInt("avg") else null,
+                min = if (o.has("min")) o.getInt("min") else null,
+                drops = o.optInt("drops", 0),
+                maxCpu = if (o.has("cpu")) o.getDouble("cpu").toFloat() else null,
+                maxBat = if (o.has("bat")) o.getDouble("bat").toFloat() else null,
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    fun addHistory(s: Session) {
+        val list = (listOf(s) + history()).take(50)
+        val arr = JSONArray()
+        list.forEach { h ->
+            val o = JSONObject()
+            o.put("pkg", h.pkg)
+            o.put("label", h.label)
+            o.put("start", h.start)
+            o.put("minutes", h.minutes)
+            h.avg?.let { o.put("avg", it) }
+            h.min?.let { o.put("min", it) }
+            o.put("drops", h.drops)
+            h.maxCpu?.let { o.put("cpu", it.toDouble()) }
+            h.maxBat?.let { o.put("bat", it.toDouble()) }
+            arr.put(o)
+        }
+        sp.edit().putString("history", arr.toString()).apply()
+    }
+
+    fun clearHistory() {
+        sp.edit().remove("history").apply()
     }
 
     companion object {

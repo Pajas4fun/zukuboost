@@ -91,18 +91,35 @@ fun batteryTemp(ctx: Context): Float {
     return (b?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
 }
 
-/** Průměrné a minimální FPS za herní relaci. */
+/** Statistiky herní relace: ø/min FPS, počet propadů, max. teploty. */
 class SessionStats {
     private var count = 0
     private var sum = 0L
     private var minFps = Int.MAX_VALUE
+    private var dropCount = 0
+    private var inDrop = false
+    private var cpuMax: Float? = null
+    private var batMax: Float? = null
 
     @Synchronized
     fun add(fps: Int) {
         if (fps <= 0) return
+        // Prvních 10 s je načítání – nepočítá se do minima ani propadů
+        if (count >= 10) {
+            val avgNow = sum.toFloat() / count
+            val low = fps < avgNow * 0.75f
+            if (low && !inDrop) dropCount++
+            inDrop = low
+            if (fps < minFps) minFps = fps
+        }
         count++
         sum += fps
-        if (fps < minFps) minFps = fps
+    }
+
+    @Synchronized
+    fun noteTemps(cpu: Float?, bat: Float?) {
+        if (cpu != null) cpuMax = maxOf(cpuMax ?: cpu, cpu)
+        if (bat != null && bat > 0f) batMax = maxOf(batMax ?: bat, bat)
     }
 
     @Synchronized
@@ -110,13 +127,26 @@ class SessionStats {
         count = 0
         sum = 0L
         minFps = Int.MAX_VALUE
+        dropCount = 0
+        inDrop = false
+        cpuMax = null
+        batMax = null
     }
 
     val avg: Int?
         @Synchronized get() = if (count == 0) null else (sum / count).toInt()
 
     val min: Int?
-        @Synchronized get() = if (count == 0) null else minFps
+        @Synchronized get() = if (minFps == Int.MAX_VALUE) null else minFps
+
+    val drops: Int
+        @Synchronized get() = dropCount
+
+    val maxCpu: Float?
+        @Synchronized get() = cpuMax
+
+    val maxBat: Float?
+        @Synchronized get() = batMax
 }
 
 class Stats(private val ctx: Context) {
@@ -152,12 +182,16 @@ class Stats(private val ctx: Context) {
         val thermal = if (Build.VERSION.SDK_INT >= 29) pm.currentThermalStatus else -1
         val mem = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
         val sec = elapsedMs / 1000
+        session.noteTemps(cpu, batTemp)
         val avg = session.avg
         val min = session.min
+        val drops = session.drops
 
         return buildString {
             append("FPS ").append(fps?.toString() ?: "--")
-            if (avg != null && min != null) append("  ø$avg  min $min")
+            if (avg != null) append("  ø$avg")
+            if (min != null) append("  min $min")
+            if (drops > 0) append("  ⚠$drops")
             append('\n')
             append("CPU ").append(deg(cpu)).append("  GPU ").append(deg(gpu)).append("  BAT ").append(deg(batTemp))
             append('\n')

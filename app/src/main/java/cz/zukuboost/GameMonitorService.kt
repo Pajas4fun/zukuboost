@@ -195,7 +195,7 @@ class GameMonitorService : Service() {
         session.reset()
         tryApply(pkg)
         if (prefs.opt(Opt.THERMAL)) startThermalGuard()
-        if (prefs.opt(Opt.OVERLAY) && Settings.canDrawOverlays(this)) startOverlay(pkg)
+        if (prefs.opt(Opt.MEASURE) || prefs.opt(Opt.OVERLAY)) startMeasure(pkg)
     }
 
     private suspend fun deactivate() {
@@ -208,11 +208,28 @@ class GameMonitorService : Service() {
         stopOverlay()
         runCatching { BoostEngine.restore(this) }
 
-        val minutes = (SystemClock.elapsedRealtime() - sessionStart) / 60_000
+        val elapsed = SystemClock.elapsedRealtime() - sessionStart
+        val minutes = elapsed / 60_000
+        val name = label(game)
         val avg = session.avg
+        if (minutes >= 1) {
+            prefs.addHistory(
+                Session(
+                    pkg = game,
+                    label = name,
+                    start = System.currentTimeMillis() - elapsed,
+                    minutes = minutes,
+                    avg = avg,
+                    min = session.min,
+                    drops = session.drops,
+                    maxCpu = session.maxCpu,
+                    maxBat = session.maxBat,
+                )
+            )
+        }
         prefs.lastSession = buildString {
-            append(label(game)).append(" · ").append(minutes).append(" min")
-            if (avg != null) append(" · ø ").append(avg).append(" FPS")
+            append(name).append(" · ").append(minutes).append(" min")
+            if (avg != null) append(" · ø ").append(avg).append(" FPS · propady ").append(session.drops)
         }
         setStatus(idleText())
     }
@@ -238,9 +255,13 @@ class GameMonitorService : Service() {
         }
     }
 
-    private suspend fun startOverlay(pkg: String) {
-        withContext(Dispatchers.Main) {
-            if (overlay == null) overlay = OverlayController(this@GameMonitorService).also { it.show() }
+    /** Měření FPS a teplot; overlay se zobrazí jen když je zapnutý. */
+    private suspend fun startMeasure(pkg: String) {
+        val showOverlay = prefs.opt(Opt.OVERLAY) && Settings.canDrawOverlays(this)
+        if (showOverlay) {
+            withContext(Dispatchers.Main) {
+                if (overlay == null) overlay = OverlayController(this@GameMonitorService).also { it.show() }
+            }
         }
         overlayJob?.cancel()
         overlayJob = scope.launch {
@@ -251,7 +272,7 @@ class GameMonitorService : Service() {
                     val fps = runCatching { meter.sample() }.getOrNull()
                     if (fps != null) session.add(fps)
                     val text = stats.format(fps, session, SystemClock.elapsedRealtime() - sessionStart)
-                    withContext(Dispatchers.Main) { overlay?.update(text) }
+                    if (showOverlay) withContext(Dispatchers.Main) { overlay?.update(text) }
                     delay(1_000)
                 }
             } finally {
