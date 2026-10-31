@@ -15,6 +15,51 @@ enum class Opt(val key: String, val title: String, val desc: String, val default
         true,
     ),
     SYNC_OFF("opt_sync", "Vypnout synchronizaci účtů", "Google, e-mail a cloud během hraní nesynchronizují (žádné náhlé zátěže úložiště). Po hře se vrátí.", true),
+    DISPLAY(
+        "opt_display",
+        "Displej: vypnout auto jas a režim čtení",
+        "Doporučení přímo od Xiaomi: jas se během hry nemění a odpadá dodatečné zpracování obrazu. Po hře se vrátí.",
+        true,
+    ),
+    LOCATION_OFF(
+        "opt_location",
+        "Vypnout polohu během hraní",
+        "Appky na pozadí nebudou zjišťovat polohu (GPS, skenování Wi-Fi a Bluetooth kvůli poloze). Nezapínej, pokud hra polohu potřebuje.",
+        false,
+    ),
+    NET_BLOCK_BG(
+        "opt_netblock",
+        "Odříznout internet appkám na pozadí",
+        "Appky z kill listu (a s utlumením i Obchod Play a GetApps) během hry nemají přístup k internetu – nic nestahují a nebere to hře linku. " +
+            "Hlasové appky a hra se neblokují. Po hře se vše vrátí, restart telefonu pravidla smaže taky.",
+        true,
+    ),
+    NETWORK_QUIET(
+        "opt_net",
+        "Síť: klidný režim",
+        "Během hry vypne „mobilní data vždy aktivní“, Wi-Fi asistenta Xiaomi a skenování zařízení v okolí. Méně zahřívání a méně výkyvů pingu. " +
+            "Nevýhoda: když Wi-Fi vypadne, telefon nepřepne na data sám.",
+        false,
+    ),
+    SCAN_OFF(
+        "opt_scan",
+        "Vypnout skenování Wi-Fi a Bluetooth na pozadí",
+        "Skenování na chvíli přerušuje Wi-Fi spojení a způsobuje skoky pingu. Během hry se vypne, po hře vrátí.",
+        true,
+    ),
+    MILLET(
+        "opt_millet",
+        "HyperOS: nezmrazovat hru a hlasové appky",
+        "Přidá hru a Discord/WhatsApp/Telegram do seznamu „Bez omezení“ systému Xiaomi (MILLET_NO_RESTRICT_APP). " +
+            "Když na chvíli odskočíš do jiné appky, hra ani hovor nezamrzne. Jen Xiaomi/Redmi/POCO.",
+        true,
+    ),
+    PROTECT_VOICE(
+        "opt_voice",
+        "Chránit hlasové appky",
+        "Discord, WhatsApp, Telegram, Skype a Teams nebudou během hraní uspané ani omezené – hovor ani stream z telefonu nevypadne. Appky z kill listu se nechrání.",
+        true,
+    ),
     DND("opt_dnd", "Režim Nerušit", "Během hraní zapne Nerušit (projdou jen prioritní hovory).", true),
     HEADS_UP("opt_headsup", "Blokovat vyskakovací oznámení", "Žádné bannery přes hru – každý banner navíc zatěžuje vykreslování.", true),
     REFRESH("opt_refresh", "Hz displeje podle hry", "Bez FPS limitu maximální Hz. S limitem Hz, které jsou jeho násobkem (např. limit 45 → 90 Hz), aby snímky šly rovnoměrně.", true),
@@ -28,15 +73,16 @@ enum class Opt(val key: String, val title: String, val desc: String, val default
     ),
     FIXED_PERF(
         "opt_fixedperf",
-        "Stabilní výkon (fixed performance)",
-        "Nastaví CPU a GPU pevnou horní i dolní hranici taktů. Nezrychlí, ale srovná výkyvy – méně propadů. Funguje jen na části telefonů.",
+        "Stabilní takty (fixed performance)",
+        "Podle Googlu NEDÁVÁ maximální výkon – zamkne CPU/GPU na nižší, udržitelný bod. Méně výkyvů, ale nižší špička. " +
+            "Hodí se jen pro dlouhé hraní na stabilní FPS. Funguje jen na části telefonů.",
         false,
     ),
     THERMAL(
         "opt_thermal",
-        "Nehlásit hrám přehřátí",
+        "Nehlásit hrám přehřátí (experimentální)",
         "Některé hry samy snižují grafiku, když systém hlásí teplo. Tohle hlášení zamkne na OK. " +
-            "Hardwarové škrcení CPU to nevypne. Při 44 °C baterie se pojistka sama vrátí.",
+            "Skutečné škrcení CPU (řídí ho výrobce) to NEVYPNE – pomáhá jen hrám, které se samy omezují. Při 44 °C baterie se pojistka sama vrátí.",
         false,
     ),
     ANIMATIONS("opt_anim", "Vypnout systémové animace", "Rychlejší přechody v systému během hraní.", false),
@@ -79,6 +125,41 @@ class Prefs(ctx: Context) {
         get() = getSet("restricted")
         set(v) {
             sp.edit().putStringSet("restricted", HashSet(v)).commit()
+        }
+
+    /** Hlasové appky, které jsme přidali na seznam výjimek z úspory (po hře se odeberou). */
+    var voiceAdded: Set<String>
+        get() = getSet("voice_added")
+        set(v) {
+            sp.edit().putStringSet("voice_added", HashSet(v)).commit()
+        }
+
+    /** Appky, kterým jsme během hry zablokovali síť (po hře se odblokují). */
+    var netBlocked: Set<String>
+        get() = getSet("net_blocked")
+        set(v) {
+            sp.edit().putStringSet("net_blocked", HashSet(v)).commit()
+        }
+
+    /** Původní režim synchronizace device_config (null = nesahali jsme). */
+    var syncModeOrig: String?
+        get() = sp.getString("sync_mode_orig", null)
+        set(v) {
+            sp.edit().putString("sync_mode_orig", v).commit()
+        }
+
+    /** Původní standby buckety appek z kill listu ve formátu "balíček=číslo". */
+    var bucketOrig: Set<String>
+        get() = getSet("bucket_orig")
+        set(v) {
+            sp.edit().putStringSet("bucket_orig", HashSet(v)).commit()
+        }
+
+    /** Uživatel chce mít odemčené GPU nastavení v Game Turbu – cloud ho resetuje, takže ho obnovujeme. */
+    var gpuTunerWanted: Boolean
+        get() = sp.getBoolean("gputuner_wanted", false)
+        set(v) {
+            sp.edit().putBoolean("gputuner_wanted", v).apply()
         }
 
     var boostActive: Boolean
@@ -189,6 +270,10 @@ class Prefs(ctx: Context) {
         e.remove("thermal_override")
         e.remove("fixed_perf")
         e.remove("sync_was")
+        e.remove("voice_added")
+        e.remove("net_blocked")
+        e.remove("sync_mode_orig")
+        e.remove("bucket_orig")
         e.putBoolean("boost_active", false)
         e.commit()
     }

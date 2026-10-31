@@ -1,4 +1,4 @@
-# ⚡ ZukuBoost 2.0
+# ⚡ ZukuBoost 2.5
 
 Herní booster pro Android přes Shizuku / Shizuku Next. Bez rootu.
 
@@ -25,6 +25,33 @@ Po odchodu ze hry (3 s mimo hru) nebo zhasnutí displeje se vše vrátí.
 - **Skrytý výkonový režim Xiaomi:** tlačítko otevře systémový výběr Úspora / Vyvážený / Výkon
 - **Kontrola zápisu nastavení:** HyperOS vyžaduje v Možnostech pro vývojáře zapnout
   *Ladění USB (Bezpečnostní nastavení)*, jinak shell nemůže měnit systémová nastavení
+
+## 2.5 – podle hloubkového průzkumu
+- FPS limit/rozlišení teď i přes `cmd game set` (druhá cesta vedle `device_config game_overlay`)
+- Během hry `device_config set_sync_disabled_for_tests persistent` – server nepřepíše herní profil (po hře se vrátí)
+- **HyperOS: nezmrazovat hru a hlasové appky** (`MILLET_NO_RESTRICT_APP`)
+- **Vypnutí skenování Wi-Fi/Bluetooth** na pozadí (méně skoků pingu)
+- Kill list navíc do standby bucketu `restricted` (po hře se vrátí původní)
+- `speed_mode` + `speed_mode_enable` a GPU volba v Game Turbu se obnovují při každé hře (cloud je resetuje)
+- **Zmrazování appek v cache** (`cached_apps_freezer`, po restartu)
+- **Diagnostika boostu** – čte skutečný stav přes `dumpsys`
+- Opravené popisy: fixed performance = stabilní takty, ne max výkon; skrytí přehřátí = experimentální
+
+## 2.4
+- **Odříznutí internetu appkám na pozadí** během hry (connectivity chain 3 – stejný mechanismus jako ShizuWall)
+
+## 2.3
+- **Síť: klidný režim** – během hry vypne „mobilní data vždy aktivní“, Wi-Fi asistenta Xiaomi a skenování okolí
+
+## 2.2
+- **Xiaomi chytré FPS** (`is_smart_fps`) se během hry vypne – displej nesnižuje Hz sám od sebe
+- **Ochrana hlasových appek** (Discord, WhatsApp, Telegram, Skype, Teams) – během hraní je systém neuspí
+- Workflow na nejnovějších verzích akcí (checkout v7, setup-java v5, setup-gradle v6, upload-artifact v7)
+
+## 2.1
+- **Displej:** během hry vypne automatický jas a režim čtení (doporučení Xiaomi)
+- **Vypnutí polohy** během hraní (volitelné)
+- **Odemknutí skrytého GPU nastavení v Game Turbu** (`GPUTUNER_SWITCH`)
 
 ## 2.0 – nový herní vzhled
 - **Domů (Game Space):** výběr hry, profil hry, velké tlačítko **SPUSTIT S BOOSTEM**

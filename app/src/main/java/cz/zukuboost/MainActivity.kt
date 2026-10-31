@@ -191,6 +191,9 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     var writeOk by mutableIntStateOf(prefs.settingsWriteOk)
     var driverSupported by mutableStateOf(false)
     var driverApps by mutableStateOf(emptySet<String>())
+    var gpuTuner by mutableStateOf(false)
+    var freezer by mutableStateOf("")
+    var diagText by mutableStateOf<String?>(null)
     var apps by mutableStateOf<List<AppItem>?>(null)
     var selected by mutableStateOf(prefs.lastGame)
     var historyTick by mutableIntStateOf(0)
@@ -221,6 +224,16 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
             busy = null
             recheck++
             toast(result.fold({ it.ifBlank { "Hotovo" }.take(180) }, { "Chyba: ${it.message}" }))
+        }
+    }
+
+    /** Ověří přes dumpsys, co systém z boostu opravdu používá. */
+    fun runDiagnostics() {
+        if (busy != null) return
+        busy = "Ověřuji, co systém používá…"
+        scope.launch {
+            diagText = runCatching { BoostEngine.diagnose(ctx, selected) }.getOrElse { "Chyba: ${it.message}" }
+            busy = null
         }
     }
 
@@ -319,6 +332,8 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
             if (s.driverSupported) {
                 s.driverApps = runCatching { BoostEngine.gameDriverApps() }.getOrDefault(emptySet())
             }
+            s.gpuTuner = runCatching { BoostEngine.gpuTunerEnabled() }.getOrDefault(false)
+            s.freezer = runCatching { BoostEngine.freezerState() }.getOrDefault("")
         }
     }
 

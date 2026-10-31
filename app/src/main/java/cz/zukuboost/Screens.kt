@@ -45,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -606,6 +607,24 @@ fun SettingsScreen(s: UiState, shizuku: Shell.State, tick: Int, onRequestShizuku
                 }
             }
             item {
+                NeonCard(title = "GPU nastavení v Game Turbu", accent = NeonYellow) {
+                    Text(
+                        "Xiaomi na mnoha telefonech skrylo v Game Turbu volbu výkonu GPU. Tímhle ji zkusíš odemknout. " +
+                            "Na některých modelech nefunguje – pak se nic nestane.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextDim,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(if (s.gpuTuner) "Stav: odemčeno ✅" else "Stav: skryto", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(10.dp))
+                    NeonButton(if (s.gpuTuner) "Skrýt zpět" else "Odemknout GPU nastavení", {
+                        val on = !s.gpuTuner
+                        s.gpuTuner = on
+                        s.runTask("Nastavuji…") { BoostEngine.setGpuTuner(ctx, on) }
+                    }, enabled = ready && s.busy == null, color = NeonYellow, outlined = s.gpuTuner)
+                }
+            }
+            item {
                 NeonCard(title = "Joyose", accent = NeonYellow) {
                     Text(
                         "Systémová služba Xiaomi, která podle cloudových profilů omezuje výkon a FPS ve hrách. " +
@@ -625,6 +644,43 @@ fun SettingsScreen(s: UiState, shizuku: Shell.State, tick: Int, onRequestShizuku
                             BoostEngine.setJoyose(!joyoseOn)
                         }
                     }, enabled = ready && s.busy == null, color = NeonYellow)
+                }
+            }
+        }
+
+        // ---------- Systém ----------
+        item { SectionHeader("Systém") }
+        item {
+            NeonCard(title = "Zmrazování appek na pozadí", accent = NeonCyan) {
+                Text(
+                    "Appky v paměti se 10 s po odchodu na pozadí zmrazí a neberou hře procesor. " +
+                        "Trvalé systémové nastavení, projeví se po restartu telefonu.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextDim,
+                )
+                Spacer(Modifier.height(8.dp))
+                val on = s.freezer == "enabled"
+                Text(if (on) "Stav: zapnuto ✅" else "Stav: výchozí systému", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(10.dp))
+                NeonButton(if (on) "Vrátit na výchozí" else "Zapnout zmrazování", {
+                    s.freezer = if (on) "null" else "enabled"
+                    s.runTask("Nastavuji…") { BoostEngine.setFreezer(!on) }
+                }, enabled = ready && s.busy == null, color = NeonCyan, outlined = on)
+            }
+        }
+        item {
+            NeonCard(title = "Diagnostika boostu", accent = NeonCyan) {
+                Text(
+                    "Systém nikdy nehlásí, že nějaké nastavení ignoruje. Tohle přečte skutečný stav (Hz, Game Mode, " +
+                        "teploty, výkonový režim). Nejlépe spusť během hry přes dlaždici nebo hned po ní.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextDim,
+                )
+                Spacer(Modifier.height(10.dp))
+                NeonButton("Ověřit boost", { s.runDiagnostics() }, enabled = ready && s.busy == null, color = NeonCyan)
+                s.diagText?.let { text ->
+                    Spacer(Modifier.height(10.dp))
+                    Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = Color(0xFFCFD3DC))
                 }
             }
         }
