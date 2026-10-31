@@ -461,18 +461,44 @@ object BoostEngine {
         }
     }
 
-    /** Zmrazování appek v cache: appky na pozadí nebrání hře v CPU. Projeví se po restartu. */
-    suspend fun freezerState(): String = Shell.exec("settings get global cached_apps_freezer").trim()
+    /** setting = uložená hodnota, active = co Android opravdu používá (null = nejde zjistit). */
+    data class FreezerInfo(val setting: String, val active: Boolean?)
 
-    suspend fun setFreezer(on: Boolean): String {
+    /** Zmrazování appek v cache: appky na pozadí nebrání hře v CPU. */
+    suspend fun freezerState(): FreezerInfo {
+        val out = Shell.exec(
+            "echo \"S=\$(settings get global cached_apps_freezer)\"; " +
+                "dumpsys activity settings | grep -m 1 -i 'use_freezer'"
+        )
+        val setting = out.lines().firstOrNull { it.startsWith("S=") }?.removePrefix("S=")?.trim() ?: ""
+        val line = out.lines().firstOrNull { it.contains("use_freezer", ignoreCase = true) }?.lowercase()
+        val active = when {
+            line == null -> null
+            line.contains("true") -> true
+            line.contains("false") -> false
+            else -> null
+        }
+        return FreezerInfo(setting, active)
+    }
+
+    suspend fun setFreezer(ctx: Context, on: Boolean): String {
+        Prefs(ctx).freezerWanted = on
         val out = Shell.exec(
             if (on) "settings put global cached_apps_freezer enabled" else "settings delete global cached_apps_freezer"
         )
+        if (out.contains("Exception")) return out.trim()
+        val info = freezerState()
         return when {
-            out.contains("Exception") -> out.trim()
-            on -> "Zapnuto – projeví se po restartu telefonu"
-            else -> "Vráceno na výchozí – projeví se po restartu telefonu"
+            on && info.active == true -> "Zmrazování běží ✅"
+            on -> "Uloženo. Android ho zapíná při startu – po restartu ho ZukuBoost znovu nastaví sám."
+            else -> "Vráceno na výchozí systému"
         }
+    }
+
+    /** HyperOS hodnotu po startu přepisuje – pokud ji uživatel chce, vrátíme ji. */
+    suspend fun ensureFreezer(ctx: Context) {
+        if (!Prefs(ctx).freezerWanted) return
+        if (freezerState().setting != "enabled") Shell.exec("settings put global cached_apps_freezer enabled")
     }
 
     /** Ověření, co systém opravdu používá (settings put nikdy nehlásí chybu, proto čteme dumpsys). */
@@ -488,6 +514,7 @@ object BoostEngine {
             add("dumpsys power | grep -m 3 -E 'mLowPowerModeEnabled|mBatterySaverEnabled'")
             add("echo \"power_mode=\$(settings get system power_mode) speed_mode=\$(settings get system speed_mode)\"")
             add("echo \"freezer=\$(settings get global cached_apps_freezer) sync=\$(device_config get_sync_disabled_for_tests)\"")
+            add("dumpsys activity settings | grep -m 1 -i 'use_freezer'")
             if (game != null) {
                 add("echo; echo '== Game Mode: $game =='")
                 add("cmd game list-modes $game 2>&1 | head -3")

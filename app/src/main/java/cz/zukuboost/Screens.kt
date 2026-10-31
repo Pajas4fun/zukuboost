@@ -654,18 +654,49 @@ fun SettingsScreen(s: UiState, shizuku: Shell.State, tick: Int, onRequestShizuku
             NeonCard(title = "Zmrazování appek na pozadí", accent = NeonCyan) {
                 Text(
                     "Appky v paměti se 10 s po odchodu na pozadí zmrazí a neberou hře procesor. " +
-                        "Trvalé systémové nastavení, projeví se po restartu telefonu.",
+                        "HyperOS má vlastní zmrazování (Millet) a to Androidí po restartu často vypne – " +
+                        "ZukuBoost ho pak sám znovu zapne, jakmile běží Shizuku.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextDim,
                 )
                 Spacer(Modifier.height(8.dp))
-                val on = s.freezer == "enabled"
-                Text(if (on) "Stav: zapnuto ✅" else "Stav: výchozí systému", fontWeight = FontWeight.Bold)
+                val info = s.freezer
+                val wanted = s.prefs.freezerWanted
+                Text(
+                    "Nastavení: " + when (info?.setting) {
+                        "enabled" -> "zapnuto"
+                        "disabled" -> "vypnuto systémem"
+                        null -> "neznámé (Shizuku neběží)"
+                        else -> "výchozí systému"
+                    },
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "Skutečný stav: " + when (info?.active) {
+                        true -> "běží ✅"
+                        false -> "neběží"
+                        null -> "nejde zjistit"
+                    },
+                    fontWeight = FontWeight.Bold,
+                    color = if (info?.active == true) NeonGreen else TextDim,
+                )
+                if (wanted && info?.active == false) {
+                    Text(
+                        "Pokud „neběží“ zůstane i po restartu a otevření ZukuBoostu, tvůj HyperOS Androidí zmrazování " +
+                            "nepovoluje. Nevadí – zmrazování pak dělá jeho vlastní Millet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = NeonYellow,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
                 Spacer(Modifier.height(10.dp))
-                NeonButton(if (on) "Vrátit na výchozí" else "Zapnout zmrazování", {
-                    s.freezer = if (on) "null" else "enabled"
-                    s.runTask("Nastavuji…") { BoostEngine.setFreezer(!on) }
-                }, enabled = ready && s.busy == null, color = NeonCyan, outlined = on)
+                NeonButton(if (wanted) "Vypnout" else "Zapnout zmrazování", {
+                    s.runTask("Nastavuji…") {
+                        val msg = BoostEngine.setFreezer(ctx, !wanted)
+                        s.freezer = BoostEngine.freezerState()
+                        msg
+                    }
+                }, enabled = ready && s.busy == null, color = NeonCyan, outlined = wanted)
             }
         }
         item {

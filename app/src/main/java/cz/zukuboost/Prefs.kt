@@ -155,6 +155,13 @@ class Prefs(ctx: Context) {
             sp.edit().putStringSet("bucket_orig", HashSet(v)).commit()
         }
 
+    /** Uživatel chce mít zapnuté zmrazování appek v cache – HyperOS ho po restartu vypíná, tak ho obnovujeme. */
+    var freezerWanted: Boolean
+        get() = sp.getBoolean("freezer_wanted", false)
+        set(v) {
+            sp.edit().putBoolean("freezer_wanted", v).apply()
+        }
+
     /** Uživatel chce mít odemčené GPU nastavení v Game Turbu – cloud ho resetuje, takže ho obnovujeme. */
     var gpuTunerWanted: Boolean
         get() = sp.getBoolean("gputuner_wanted", false)

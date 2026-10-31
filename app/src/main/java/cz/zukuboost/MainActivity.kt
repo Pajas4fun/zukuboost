@@ -192,7 +192,7 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     var driverSupported by mutableStateOf(false)
     var driverApps by mutableStateOf(emptySet<String>())
     var gpuTuner by mutableStateOf(false)
-    var freezer by mutableStateOf("")
+    var freezer by mutableStateOf<BoostEngine.FreezerInfo?>(null)
     var diagText by mutableStateOf<String?>(null)
     var apps by mutableStateOf<List<AppItem>?>(null)
     var selected by mutableStateOf(prefs.lastGame)
@@ -333,7 +333,8 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                 s.driverApps = runCatching { BoostEngine.gameDriverApps() }.getOrDefault(emptySet())
             }
             s.gpuTuner = runCatching { BoostEngine.gpuTunerEnabled() }.getOrDefault(false)
-            s.freezer = runCatching { BoostEngine.freezerState() }.getOrDefault("")
+            runCatching { BoostEngine.ensureFreezer(ctx) }
+            s.freezer = runCatching { BoostEngine.freezerState() }.getOrNull()
         }
     }
 

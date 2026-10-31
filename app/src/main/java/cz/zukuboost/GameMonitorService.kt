@@ -96,6 +96,8 @@ class GameMonitorService : Service() {
         scope.launch {
             // Po pádu/restartu nejdřív vrátíme původní nastavení
             if (prefs.boostActive) runCatching { BoostEngine.restore(this@GameMonitorService) }
+            // Po restartu telefonu HyperOS vypne zmrazování appek – obnovíme ho, jakmile je Shizuku připravené
+            runCatching { BoostEngine.ensureFreezer(this@GameMonitorService) }
             loop()
         }
     }
