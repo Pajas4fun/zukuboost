@@ -1,4 +1,4 @@
-# ⚡ ZukuBoost 2.5
+# ⚡ ZukuBoost 3.0.1
 
 Herní booster pro Android přes Shizuku / Shizuku Next. Bez rootu.
 
@@ -25,6 +25,52 @@ Po odchodu ze hry (3 s mimo hru) nebo zhasnutí displeje se vše vrátí.
 - **Skrytý výkonový režim Xiaomi:** tlačítko otevře systémový výběr Úspora / Vyvážený / Výkon
 - **Kontrola zápisu nastavení:** HyperOS vyžaduje v Možnostech pro vývojáře zapnout
   *Ladění USB (Bezpečnostní nastavení)*, jinak shell nemůže měnit systémová nastavení
+
+## 3.0.1
+- Chytré chlazení: výchozí hranice 44 °C (2. stupeň 47 °C, návrat pod 41 °C), nastavitelná 41–47 °C;
+  spustí se až když je teplo delší dobu (30 s), krátká špička nic nezmění
+
+## 3.0 – chytré chlazení
+- Hlídá teplotu baterie: 41 °C → Hz o stupeň níž, 43 °C → 60 Hz a jas −15 %, pod 39 °C vše zpět
+  (hystereze 30 s, žádné cukání); stav v notifikaci
+- Upozornění při hraní na nabíječce, když se telefon hřeje
+- Spolupracuje s „Hz podle skutečných FPS“ (během chlazení Hz nezvyšuje)
+
+## 2.9.2 – opravy chyb
+- Shell příkazy mají časový limit (150 s) – zaseknutý příkaz už nezablokuje appku
+- Souběžné připojení ke Shizuku jen jednou (žádné dvojí bindování)
+- Automatický konec nahrávání po 3 min už nezahodí registraci videa do galerie
+- Když systém odebere přístup k využití, boost se vrátí (dřív mohl zůstat viset)
+- Xiaomi klíče se zapisují jen na Xiaomi/Redmi/POCO
+- Animace spuštění nikdy nezůstane viset; chyba boostu nebo startu hry se zobrazí
+- Test zápisu nastavení jednou za spuštění appky; dlaždice panelu reagují jen při puštění na dlaždici
+
+## 2.9.1 – moderní herní panel
+- Tmavé „sklo“ s neonovým přechodovým rámečkem, živé čipy FPS / průměr / CPU / baterie,
+  dlaždice s ikonami v kruhu, vysouvací animace a odezva na stisk
+
+## 2.9 – herní panel
+- **Herní panel ve hře**: úchyt u pravého okraje (jde posouvat), panel s živým FPS a teplotami a dlaždicemi
+  📸 Snímek · ⏺ Nahrát · 📊 Overlay · 🖐 Okraje · 🧹 Vyčistit RAM · 🔒 Zámek dotyku
+
+## 2.8 – nový launch a skrytí oznámení
+- **Úplné skrytí oznámení** během hry (pravidla Nerušit: žádné bannery, ikony, tečky, blikání); notifikace ZukuBoostu zůstává
+- **Animace spuštění hry**: neonový kruh s průběhem, odškrtávání kroků, počítadlo uvolněné RAM a ukončených appek;
+  celý boost se provede ještě před startem hry
+- Herní pozadí a neonový nadpis
+- Opravy: spuštění z appky už nemůže hned vrátit boost (služba čeká, než se hra načte)
+
+## 2.7 – inspirace u herních telefonů (ROG, RedMagic)
+- **Hz podle skutečných FPS hry** (jako Touch Choreographer u RedMagic / doporučení ASUS: hra na 60 FPS → 60 Hz)
+- **Blokování dotyků na okrajích** (jako Blocked touch edges u ROG), nastavitelná šířka
+- Overlay jako Game Genie: **vytížení CPU, takty aktuální/max (vidíš throttling), vytížení GPU**
+- Z notifikace během hry: **📸 snímek obrazovky** a **⏺ nahrávání** (bez zvuku, max 3 min)
+
+## 2.6 – inspirace u ostatních game turbo
+- **Blokovat i hovory** (Nerušit „jen budíky“ – jako Samsung Priority mode / OnePlus Pro Gaming)
+- **Zámek dotyku** z notifikace během hry (jako Samsung Touch protection), odemčení podržením 1,5 s
+- Opravy: bezpečnější úprava seznamu Millet, test zápisu nastavení se neopakuje, měření bez overlaye každé 2 s,
+  timestats se po hře vždy vypne
 
 ## 2.5 – podle hloubkového průzkumu
 - FPS limit/rozlišení teď i přes `cmd game set` (druhá cesta vedle `device_config game_overlay`)

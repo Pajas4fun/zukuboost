@@ -8,6 +8,8 @@ import android.os.RemoteException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -21,6 +23,7 @@ object Shell {
     @Volatile private var service: IShellService? = null
     @Volatile private var waiter = CompletableDeferred<IShellService>()
     @Volatile private var binding = false
+    private val connectLock = Mutex()
 
     private val args by lazy {
         Shizuku.UserServiceArgs(
@@ -63,7 +66,13 @@ object Shell {
         State.NOT_RUNNING
     }
 
+    /** Souběžná volání (měření, boost, panel) se připojují jen jednou – žádné dvojí bindování. */
     private suspend fun connect(): IShellService {
+        service?.let { current -> if (current.asBinder().pingBinder()) return current }
+        return connectLock.withLock { connectLocked() }
+    }
+
+    private suspend fun connectLocked(): IShellService {
         service?.let { current ->
             if (current.asBinder().pingBinder()) return current
             reset()

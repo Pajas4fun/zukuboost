@@ -177,7 +177,7 @@ fun LaunchButton(enabled: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            "▶  SPUSTIT S BOOSTEM",
+            "▶  SPUSTIT HRU",
             color = if (enabled) Color.White else TextDim,
             fontWeight = FontWeight.Black,
             fontSize = 18.sp,

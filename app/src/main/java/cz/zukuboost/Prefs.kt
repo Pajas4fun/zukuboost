@@ -60,7 +60,20 @@ enum class Opt(val key: String, val title: String, val desc: String, val default
         "Discord, WhatsApp, Telegram, Skype a Teams nebudou během hraní uspané ani omezené – hovor ani stream z telefonu nevypadne. Appky z kill listu se nechrání.",
         true,
     ),
+    HIDE_NOTIF(
+        "opt_hidenotif",
+        "Úplně skrýt oznámení",
+        "Během hry se oznámení vůbec neukážou – žádné bannery, ikony v liště, tečky na ikonách ani blikání. " +
+            "Počkají a uvidíš je po hře. Zapne i Nerušit.",
+        true,
+    ),
     DND("opt_dnd", "Režim Nerušit", "Během hraní zapne Nerušit (projdou jen prioritní hovory).", true),
+    BLOCK_CALLS(
+        "opt_blockcalls",
+        "Blokovat i hovory",
+        "Nerušit v režimu „jen budíky“ – během hry neprojde žádný hovor ani oznámení (jako Priority mode u Samsungu nebo Pro Gaming u OnePlus). Funguje se zapnutým Nerušit.",
+        false,
+    ),
     HEADS_UP("opt_headsup", "Blokovat vyskakovací oznámení", "Žádné bannery přes hru – každý banner navíc zatěžuje vykreslování.", true),
     REFRESH("opt_refresh", "Hz displeje podle hry", "Bez FPS limitu maximální Hz. S limitem Hz, které jsou jeho násobkem (např. limit 45 → 90 Hz), aby snímky šly rovnoměrně.", true),
     BATTERY_SAVER("opt_saver", "Vypnout spořič baterie", "Spořič škrtí výkon, během hraní se vypne.", true),
@@ -85,8 +98,35 @@ enum class Opt(val key: String, val title: String, val desc: String, val default
             "Skutečné škrcení CPU (řídí ho výrobce) to NEVYPNE – pomáhá jen hrám, které se samy omezují. Při 44 °C baterie se pojistka sama vrátí.",
         false,
     ),
+    SMART_COOL(
+        "opt_smartcool",
+        "Chytré chlazení",
+        "Hlídá teplotu baterie. Když je telefon delší dobu přes nastavenou hranici, sníží Hz displeje o stupeň, " +
+            "o 3 °C výš na 60 Hz a jas −15 %. O 3 °C pod hranicí se vše vrátí. Hranici nastavíš níž. Upozorní i na hraní na nabíječce.",
+        true,
+    ),
+    AUTO_HZ(
+        "opt_autohz",
+        "Hz podle skutečných FPS hry",
+        "Po minutě hraní změří, kolik FPS hra opravdu dává, a sníží Hz displeje na nejbližší vyšší hodnotu (např. hra na 60 FPS → 60 Hz). " +
+            "Méně tepla a rovnoměrnější snímky – jako Touch Choreographer u RedMagic nebo doporučení ASUS ROG. Platí jen bez FPS limitu.",
+        false,
+    ),
+    EDGE_BLOCK(
+        "opt_edge",
+        "Blokovat dotyky na okrajích",
+        "Úzké pruhy u levého a pravého okraje nereagují na dotyk – dlaň pod palcem nic nezmáčkne (jako Blocked touch edges u ASUS ROG). Šířka jde nastavit níž.",
+        false,
+    ),
     ANIMATIONS("opt_anim", "Vypnout systémové animace", "Rychlejší přechody v systému během hraní.", false),
     MEASURE("opt_measure", "Měřit FPS a teploty", "Ukládá do Historie ø FPS, minimum, počet propadů a max. teploty každé hry.", true),
+    GAME_PANEL(
+        "opt_panel",
+        "Herní panel ve hře",
+        "U pravého okraje se ve hře objeví úzký úchyt. Klepnutím vysuneš panel: snímek, nahrávání, overlay, blokování okrajů, " +
+            "vyčištění RAM a zámek dotyku. Úchytem jde posouvat nahoru a dolů.",
+        true,
+    ),
     OVERLAY("opt_overlay", "Overlay ve hře", "Plovoucí ukazatel FPS, propadů, teplot a příkonu. Dá se přetáhnout.", true),
 }
 
@@ -169,6 +209,20 @@ class Prefs(ctx: Context) {
             sp.edit().putBoolean("gputuner_wanted", v).apply()
         }
 
+    /** Záloha pravidel Nerušit (priorityCategories,call,message,effects,conversation). */
+    var policyBackup: String?
+        get() = sp.getString("policy_backup", null)
+        set(v) {
+            sp.edit().putString("policy_backup", v).commit()
+        }
+
+    /** Spuštění z domovské obrazovky – do té doby služba nesmí boost vracet (hra se ještě načítá). */
+    var launchGraceUntil: Long
+        get() = sp.getLong("launch_grace", 0L)
+        set(v) {
+            sp.edit().putLong("launch_grace", v).commit()
+        }
+
     var boostActive: Boolean
         get() = sp.getBoolean("boost_active", false)
         set(v) {
@@ -229,6 +283,20 @@ class Prefs(ctx: Context) {
 
     // ----- profil hry -----
 
+    /** Teplota baterie, od které začne chytré chlazení (°C). */
+    var coolStartC: Int
+        get() = sp.getInt("cool_start", 44)
+        set(v) {
+            sp.edit().putInt("cool_start", v).apply()
+        }
+
+    /** Šířka blokovaných okrajů v dp. */
+    var edgeWidthDp: Int
+        get() = sp.getInt("edge_width", 16)
+        set(v) {
+            sp.edit().putInt("edge_width", v).apply()
+        }
+
     fun scale(pkg: String): Float = sp.getFloat("scale_$pkg", 1f)
 
     fun setScale(pkg: String, v: Float) {
@@ -281,6 +349,7 @@ class Prefs(ctx: Context) {
         e.remove("net_blocked")
         e.remove("sync_mode_orig")
         e.remove("bucket_orig")
+        e.remove("policy_backup")
         e.putBoolean("boost_active", false)
         e.commit()
     }

@@ -1,5 +1,6 @@
 package cz.zukuboost
 
+import android.app.NotificationManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.ApplicationInfo
@@ -120,6 +121,34 @@ object BoostEngine {
         return display?.supportedModes?.map { it.refreshRate }?.distinct()?.sorted() ?: listOf(60f)
     }
 
+    /** Hz, na kterých hra startuje (bez chlazení). */
+    fun sessionHz(ctx: Context, pkg: String): Float =
+        if (Prefs(ctx).opt(Opt.REFRESH)) targetHz(ctx, Prefs(ctx).fpsCap(pkg)) else currentHz(ctx)
+
+    fun currentHz(ctx: Context): Float =
+        ctx.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)?.refreshRate ?: 60f
+
+    /** Ztlumení jasu při přehřátí; vrací původní hodnotu (pro návrat), nebo null. */
+    suspend fun dimBrightness(factor: Float): String? {
+        val cur = Shell.exec("settings get system screen_brightness").trim()
+        val v = cur.toIntOrNull() ?: return null
+        Shell.exec("settings put system screen_brightness ${(v * factor).toInt().coerceAtLeast(1)}")
+        return cur
+    }
+
+    /** Vrátí Hz klíče na hodnoty před hrou (chlazení bez volby „Hz displeje podle hry“). */
+    suspend fun restoreHz(ctx: Context) {
+        val hzRe = Regex("^(system|secure)/((peak|min|user|miui)_refresh_rate|is_smart_fps)$")
+        val cmds = Prefs(ctx).originals().filterKeys { hzRe.matches(it) }.map { (id, value) ->
+            if (value.isEmpty() || value == "null") "settings delete ${ns(id)} ${key(id)}" else put(id, value)
+        }
+        if (cmds.isNotEmpty()) Shell.exec(cmds.joinToString("; "))
+    }
+
+    suspend fun setBrightness(value: String) {
+        if (value.toIntOrNull() != null) Shell.exec("settings put system screen_brightness $value")
+    }
+
     /** Bez limitu nejvyšší Hz, s limitem nejvyšší Hz, které jsou jeho násobkem (rovnoměrné snímky). */
     private fun targetHz(ctx: Context, cap: Int): Float {
         val rates = refreshRates(ctx)
@@ -151,7 +180,8 @@ object BoostEngine {
     suspend fun apply(ctx: Context, pkg: String) {
         if (!PKG_RE.matches(pkg)) return
         val p = Prefs(ctx)
-        val hzKeys = if (p.opt(Opt.REFRESH)) detectHzKeys() else emptyList()
+        // Hz klíče ukládáme i pro chytré chlazení (mění Hz za běhu), zapisujeme je jen s volbou REFRESH
+        val hzKeys = if (p.opt(Opt.REFRESH) || p.opt(Opt.SMART_COOL)) detectHzKeys() else emptyList()
 
         // Ukládáme originál každého klíče, který ještě uložený není.
         // Díky tomu se vrátí i nastavení zapnutá uprostřed hraní.
@@ -159,9 +189,9 @@ object BoostEngine {
             if (p.opt(Opt.HEADS_UP)) add(HEADS_UP)
             addAll(hzKeys)
             if (p.opt(Opt.ANIMATIONS)) addAll(ANIMS)
-            if (p.opt(Opt.DND)) add(ZEN)
+            if (p.opt(Opt.DND) || p.opt(Opt.HIDE_NOTIF)) add(ZEN)
             if (p.opt(Opt.BATTERY_SAVER)) add(LOW_POWER)
-            if (p.opt(Opt.XIAOMI_PERF)) {
+            if (p.opt(Opt.XIAOMI_PERF) && isXiaomi()) {
                 add(XIAOMI_POWER_MODE)
                 add(XIAOMI_SPEED_MODE)
                 add(XIAOMI_SPEED_MODE_ENABLE)
@@ -182,11 +212,13 @@ object BoostEngine {
         p.boostActive = true
 
         val cmds = mutableListOf<String>()
-        if (p.opt(Opt.DND)) cmds += "cmd notification set_dnd priority"
+        if (p.opt(Opt.DND) || p.opt(Opt.HIDE_NOTIF)) {
+            cmds += "cmd notification set_dnd " + if (p.opt(Opt.BLOCK_CALLS)) "alarms" else "priority"
+        }
         if (p.opt(Opt.HEADS_UP)) cmds += put(HEADS_UP, "0")
         val cap = p.fpsCap(pkg)
         val scale = p.scale(pkg)
-        if (hzKeys.isNotEmpty()) {
+        if (hzKeys.isNotEmpty() && p.opt(Opt.REFRESH)) {
             val hz = targetHz(ctx, cap)
             val asFloat = String.format(Locale.US, "%.1f", hz)
             val asInt = hz.roundToInt().toString()
@@ -231,7 +263,7 @@ object BoostEngine {
                 if (v != null && v != "null") cmds += put(id, "0")
             }
         }
-        if (p.opt(Opt.XIAOMI_PERF)) {
+        if (p.opt(Opt.XIAOMI_PERF) && isXiaomi()) {
             cmds += put(XIAOMI_POWER_MODE, "high")
             // speed_mode se po restartu vrací na 0 – nastavujeme ho při každé hře
             cmds += put(XIAOMI_SPEED_MODE, "1")
@@ -241,14 +273,14 @@ object BoostEngine {
         if (p.gpuTunerWanted) cmds += "settings put global GPUTUNER_SWITCH true"
         if (p.opt(Opt.MILLET) && isXiaomi()) {
             val orig = p.originals()[MILLET]
-            val base = if (orig == null || orig == "null" || orig.isBlank()) {
-                emptyList()
-            } else {
-                orig.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val empty = orig == null || orig == "null" || orig.isBlank()
+            // Seznam Xiaomi měníme jen když mu rozumíme – jinak by ho po hře nešlo přesně vrátit
+            if (empty || VALUE_RE.matches(orig!!)) {
+                val base = if (empty) emptyList() else orig!!.split(",").filter { it.isNotBlank() }
+                val voice = VOICE_APPS.filter { it !in p.killList && isInstalled(ctx, it) }
+                val added = (listOf(pkg) + voice).filter { PKG_RE.matches(it) && it !in base }
+                if (added.isNotEmpty()) cmds += put(MILLET, (base + added).joinToString(","))
             }
-            val voice = VOICE_APPS.filter { it !in p.killList && isInstalled(ctx, it) }
-            val list = (base + pkg + voice).distinct().filter { PKG_RE.matches(it) }
-            cmds += put(MILLET, list.joinToString(","))
         }
         if (p.opt(Opt.SCAN_OFF)) {
             cmds += "cmd wifi set-scan-always-available disabled"
@@ -269,6 +301,8 @@ object BoostEngine {
             cmds += "cmd thermalservice override-status 0"
         }
         if (cmds.isNotEmpty()) Shell.exec(cmds.joinToString("; "))
+
+        if (p.opt(Opt.HIDE_NOTIF)) runCatching { hideNotifications(ctx, p) }
 
         if (p.opt(Opt.SYNC_OFF)) {
             runCatching {
@@ -357,9 +391,127 @@ object BoostEngine {
         return targets.size
     }
 
+    /** Změna Hz během hry (automatické Hz podle FPS). Originály už jsou uložené z apply(). */
+    suspend fun setSessionHz(hz: Float): String {
+        val keys = detectHzKeys().filter { !it.endsWith("is_smart_fps") }
+        val asFloat = String.format(Locale.US, "%.1f", hz)
+        val asInt = hz.roundToInt().toString()
+        val cmds = keys.map { id ->
+            val k = key(id)
+            put(id, if (k.startsWith("peak") || k.startsWith("min")) asFloat else asInt)
+        }
+        return Shell.exec(cmds.joinToString("; "))
+    }
+
+    /** Snímek obrazovky přes shell (screencap). Vrací cestu, nebo prázdný text při chybě. */
+    suspend fun screenshot(): String {
+        val dir = "/sdcard/Pictures/ZukuBoost"
+        val path = "$dir/ZukuBoost_${System.currentTimeMillis()}.png"
+        val out = Shell.exec("cmd statusbar collapse; sleep 0.8; mkdir -p $dir && screencap -p $path && echo ZB_OK")
+        return if (out.contains("ZB_OK")) path else ""
+    }
+
+    /** Nahrávání obrazovky (bez zvuku, max 3 min) – běží na pozadí, zastaví se stopRecording(). */
+    suspend fun startRecording(): String {
+        val dir = "/sdcard/Movies/ZukuBoost"
+        val path = "$dir/ZukuBoost_${System.currentTimeMillis()}.mp4"
+        Shell.exec(
+            "cmd statusbar collapse; mkdir -p $dir; " +
+                "nohup screenrecord --time-limit 180 $path >/dev/null 2>&1 &"
+        )
+        return path
+    }
+
+    suspend fun stopRecording() {
+        Shell.exec("pkill -2 -x screenrecord 2>/dev/null || killall -2 screenrecord 2>/dev/null")
+    }
+
+    // ---------- Úplné skrytí oznámení (pravidla Nerušit) ----------
+
+    private val HIDE_EFFECTS =
+        NotificationManager.Policy.SUPPRESSED_EFFECT_PEEK or
+            NotificationManager.Policy.SUPPRESSED_EFFECT_STATUS_BAR or
+            NotificationManager.Policy.SUPPRESSED_EFFECT_BADGE or
+            NotificationManager.Policy.SUPPRESSED_EFFECT_AMBIENT or
+            NotificationManager.Policy.SUPPRESSED_EFFECT_NOTIFICATION_LIST or
+            NotificationManager.Policy.SUPPRESSED_EFFECT_FULL_SCREEN_INTENT or
+            NotificationManager.Policy.SUPPRESSED_EFFECT_LIGHTS
+
+    private fun makePolicy(categories: Int, calls: Int, messages: Int, effects: Int, conversations: Int) =
+        if (Build.VERSION.SDK_INT >= 30) {
+            NotificationManager.Policy(categories, calls, messages, effects, conversations)
+        } else {
+            NotificationManager.Policy(categories, calls, messages, effects)
+        }
+
+    private fun hideNotifications(ctx: Context, p: Prefs) {
+        if (Build.VERSION.SDK_INT < 28) return
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) return
+        val cur = nm.notificationPolicy
+        val conv = if (Build.VERSION.SDK_INT >= 30) cur.priorityConversationSenders else 0
+        if (p.policyBackup == null) {
+            p.policyBackup = listOf(
+                cur.priorityCategories,
+                cur.priorityCallSenders,
+                cur.priorityMessageSenders,
+                cur.suppressedVisualEffects,
+                conv,
+            ).joinToString(",")
+        }
+        nm.notificationPolicy = makePolicy(
+            cur.priorityCategories,
+            cur.priorityCallSenders,
+            cur.priorityMessageSenders,
+            HIDE_EFFECTS,
+            conv,
+        )
+    }
+
+    private fun restoreNotifications(ctx: Context, p: Prefs) {
+        val backup = p.policyBackup ?: return
+        if (Build.VERSION.SDK_INT < 28) return
+        val v = backup.split(",").mapNotNull { it.toIntOrNull() }
+        if (v.size < 5) return
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) return
+        nm.notificationPolicy = makePolicy(v[0], v[1], v[2], v[3], v[4])
+    }
+
+    /** Kroky, které se ukážou v animaci spuštění hry (podle zapnutých voleb). */
+    fun launchSteps(ctx: Context, pkg: String): List<String> {
+        val p = Prefs(ctx)
+        val kill = (p.killList - pkg).count { isInstalled(ctx, it) }
+        val cap = p.fpsCap(pkg)
+        val scale = p.scale(pkg)
+        return buildList {
+            if (p.opt(Opt.KILL_BG)) add(if (kill > 0) "Ukončuji appky na pozadí ($kill)" else "Čistím procesy na pozadí")
+            add("Uvolňuji paměť RAM")
+            if (p.opt(Opt.SYSTEM_HOGS)) add("Utlumuji systémové služby a aktualizace")
+            if (p.opt(Opt.NET_BLOCK_BG)) add("Odpojuji internet appkám na pozadí")
+            if (p.opt(Opt.HIDE_NOTIF) || p.opt(Opt.DND)) {
+                add(if (p.opt(Opt.BLOCK_CALLS)) "Vypínám oznámení i hovory" else "Vypínám oznámení")
+            }
+            if (p.opt(Opt.REFRESH)) add("Zamykám ${targetHz(ctx, cap).roundToInt()} Hz displeje")
+            if (cap > 0 || scale < 0.99f) {
+                val parts = buildList {
+                    if (cap > 0) add("FPS $cap")
+                    if (scale < 0.99f) add("rozlišení ${(scale * 100).roundToInt()} %")
+                }
+                add("Profil hry: ${parts.joinToString(" · ")}")
+            }
+            if (p.opt(Opt.GAME_MODE)) add("Game Mode: výkon")
+            if (p.opt(Opt.XIAOMI_PERF) && isXiaomi()) add("Xiaomi výkonový profil")
+            if (p.opt(Opt.BATTERY_SAVER)) add("Vypínám spořič baterie")
+            if (p.opt(Opt.PROTECT_VOICE)) add("Chráním Discord a hovory")
+            if (p.opt(Opt.SMART_COOL)) add("Chytré chlazení připraveno")
+        }
+    }
+
     suspend fun restore(ctx: Context) {
         val p = Prefs(ctx)
         if (!p.boostActive) return
+        runCatching { restoreNotifications(ctx, p) }
 
         val cmds = mutableListOf<String>()
         for ((id, value) in p.originals()) {
@@ -392,6 +544,7 @@ object BoostEngine {
             }
         }
         if (p.thermalOverride) cmds += "cmd thermalservice reset"
+        cmds += "dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1"
         if (p.fixedPerf) cmds += "cmd power set-fixed-performance-mode-enabled false"
         p.syncModeOrig?.let { mode ->
             cmds += "device_config set_sync_disabled_for_tests ${if (mode in SYNC_MODES) mode else "none"}"
@@ -620,6 +773,7 @@ object BoostEngine {
             "cmd appops set $me SYSTEM_ALERT_WINDOW allow",
             "cmd appops set $me RUN_ANY_IN_BACKGROUND allow",
             "dumpsys deviceidle whitelist +$me",
+            "cmd notification allow_dnd $me", // přístup k pravidlům Nerušit (úplné skrytí oznámení)
         )
         if (Build.VERSION.SDK_INT >= 33) cmds += "pm grant $me android.permission.POST_NOTIFICATIONS"
         val out = Shell.exec(cmds.joinToString("; "))

@@ -39,7 +39,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.runtime.mutableFloatStateOf
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -178,6 +180,19 @@ private fun freeRamMb(ctx: Context): Long {
     return mi.availMem / 1_048_576
 }
 
+// ---------- Animace spuštění hry ----------
+
+/** state: 0 čeká, 1 právě běží, 2 hotovo */
+data class LaunchStep(val title: String, val state: Int)
+
+class LaunchUi(val app: AppItem?, val label: String) {
+    var steps by mutableStateOf(listOf<LaunchStep>())
+    var freedMb by mutableIntStateOf(0)
+    var killed by mutableIntStateOf(0)
+    var progress by mutableFloatStateOf(0f)
+    var phase by mutableStateOf("")
+}
+
 // ---------- Stav UI sdílený mezi obrazovkami ----------
 
 class UiState(val ctx: Context, private val scope: CoroutineScope, private val snackbar: SnackbarHostState) {
@@ -189,6 +204,7 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     var busy by mutableStateOf<String?>(null)
     var recheck by mutableIntStateOf(0)
     var writeOk by mutableIntStateOf(prefs.settingsWriteOk)
+    var writeChecked = false
     var driverSupported by mutableStateOf(false)
     var driverApps by mutableStateOf(emptySet<String>())
     var gpuTuner by mutableStateOf(false)
@@ -197,6 +213,7 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     var apps by mutableStateOf<List<AppItem>?>(null)
     var selected by mutableStateOf(prefs.lastGame)
     var historyTick by mutableIntStateOf(0)
+    var launch by mutableStateOf<LaunchUi?>(null)
 
     val scales = mutableStateMapOf<String, Float>()
     val caps = mutableStateMapOf<String, Int>()
@@ -265,34 +282,66 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
         monitorOn = false
     }
 
-    /** Spuštění z domovské obrazovky: úklid paměti, zapnutí auto boostu, start hry. */
+    /**
+     * Spuštění z domovské obrazovky s animací: celý boost se provede ještě před startem hry
+     * (úklid, oznámení, Hz, profil…), kroky se postupně odškrtávají, pak se spustí hra.
+     */
     fun launchGame(pkg: String) {
-        if (busy != null) return
+        if (busy != null || launch != null) return
         val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
         if (intent == null) {
             toast("Hru nejde spustit")
             return
         }
         prefs.lastGame = pkg
-        busy = "Boostuji ${labelOf(pkg)}…"
+        val ui = LaunchUi(apps?.firstOrNull { it.pkg == pkg }, labelOf(pkg))
+        launch = ui
         scope.launch {
-            var msg = ""
-            if (Shell.state() == Shell.State.READY) {
-                val before = freeRamMb(ctx)
-                val killed = runCatching { BoostEngine.preLaunchClean(ctx, pkg) }.getOrDefault(0)
-                delay(700)
-                val freed = max(0L, freeRamMb(ctx) - before)
-                msg = "Ukončeno $killed appek · uvolněno $freed MB"
+          try {
+            val ready = Shell.state() == Shell.State.READY
+            val titles = if (ready) {
+                BoostEngine.launchSteps(ctx, pkg) + "Hra připravena"
             } else {
-                msg = "Shizuku neběží – hra se spouští bez boostu"
+                listOf("Shizuku neběží – spouštím bez boostu")
             }
-            // Auto boost zajistí plný boost během hry a vrácení nastavení po ní
+            ui.steps = titles.map { LaunchStep(it, 0) }
+            val before = freeRamMb(ctx)
+            ui.killed = (prefs.killList - pkg).count {
+                runCatching { ctx.packageManager.getApplicationInfo(it, 0) }.isSuccess
+            }
+
+            // Služba hry nesmí boost vracet, dokud se hra nenačte do popředí
+            prefs.launchGraceUntil = System.currentTimeMillis() + 20_000
+            val work = async {
+                if (ready) runCatching { BoostEngine.apply(ctx, pkg) } else null
+            }
+
+            titles.indices.forEach { i ->
+                ui.steps = ui.steps.mapIndexed { j, st -> if (j == i) st.copy(state = 1) else st }
+                // Poslední krok čeká, až je boost opravdu hotový
+                if (i == titles.lastIndex) work.await() else delay(if (i == 0) 450L else 260L)
+                ui.steps = ui.steps.mapIndexed { j, st -> if (j == i) st.copy(state = 2) else st }
+                ui.progress = (i + 1f) / titles.size
+                ui.freedMb = max(0L, freeRamMb(ctx) - before).toInt()
+            }
+            val result = work.await()
+            ui.freedMb = max(0L, freeRamMb(ctx) - before).toInt()
+
+            // Auto boost hlídá hru a po jejím konci vše vrátí
+            var note = ""
+            if (result?.isFailure == true) note = "Boost se nepodařil: ${result.exceptionOrNull()?.message}"
             if (!GameMonitorService.running && !startMonitor()) {
-                msg += " · zapni přístup k využití v Nastavení"
+                note = "Zapni přístup k využití v Nastavení, jinak se boost po hře nevrátí"
             }
-            busy = null
-            toast(msg)
-            ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            ui.phase = "SPOUŠTÍM HRU"
+            delay(550)
+            val started = runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
+            delay(700)
+            if (!started) note = "Hru se nepodařilo spustit"
+            if (note.isNotEmpty()) toast(note)
+          } finally {
+            launch = null // animace nesmí zůstat viset ani při chybě
+          }
         }
     }
 }
@@ -327,7 +376,12 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
         }
         s.monitorOn = GameMonitorService.running
         if (shizuku == Shell.State.READY) {
-            s.writeOk = if (runCatching { BoostEngine.checkSettingsWrite(ctx) }.getOrDefault(false)) 1 else 0
+            // Test zapisuje do nastavení – po úspěchu ho už při každém návratu do appky neopakujeme
+            // Jednou za spuštění appky (uživatel mohl bezpečnostní ladění mezitím vypnout), jinak jen dokud neprojde
+            if (s.writeOk != 1 || !s.writeChecked) {
+                s.writeChecked = true
+                s.writeOk = if (runCatching { BoostEngine.checkSettingsWrite(ctx) }.getOrDefault(false)) 1 else 0
+            }
             s.driverSupported = runCatching { BoostEngine.gameDriverSupported() }.getOrDefault(false)
             if (s.driverSupported) {
                 s.driverApps = runCatching { BoostEngine.gameDriverApps() }.getOrDefault(emptySet())
@@ -362,9 +416,9 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
         Box(
             Modifier
                 .fillMaxSize()
-                .padding(inner)
-                .background(Brush.verticalGradient(listOf(Color(0xFF14070C), Bg, Bg))),
+                .padding(inner),
         ) {
+            GamingBackground()
             when (tab) {
                 0 -> HomeScreen(s, shizuku, tick, onOpenGames = { tab = 1 }, onOpenSettings = { tab = 4 })
                 1 -> GamesScreen(s, shizuku)
@@ -373,6 +427,7 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                 else -> SettingsScreen(s, shizuku, tick, onRequestShizuku)
             }
             s.busy?.let { BusyOverlay(it) }
+            s.launch?.let { LaunchOverlay(it) }
         }
     }
 }

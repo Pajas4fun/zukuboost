@@ -1,5 +1,6 @@
 package cz.zukuboost
 
+import java.util.concurrent.TimeUnit
 import kotlin.system.exitProcess
 
 /**
@@ -18,11 +19,33 @@ class ShellService : IShellService.Stub() {
             val process = ProcessBuilder("sh", "-c", cmd)
                 .redirectErrorStream(true)
                 .start()
-            val output = process.inputStream.bufferedReader().use { it.readText() }
-            process.waitFor()
-            output
+            // Výstup čteme v samostatném vlákně, ať zaseknutý příkaz nezablokuje celou appku
+            val output = StringBuilder()
+            val reader = Thread {
+                runCatching {
+                    process.inputStream.bufferedReader().use { r ->
+                        val buf = CharArray(8192)
+                        while (true) {
+                            val n = r.read(buf)
+                            if (n < 0) break
+                            synchronized(output) { output.append(buf, 0, n) }
+                        }
+                    }
+                }
+            }
+            reader.start()
+            val finished = process.waitFor(TIMEOUT_S, TimeUnit.SECONDS)
+            if (!finished) process.destroyForcibly()
+            reader.join(2_000)
+            val text = synchronized(output) { output.toString() }
+            if (finished) text else "$text\nERROR: příkaz překročil ${TIMEOUT_S}s a byl ukončen"
         } catch (t: Throwable) {
             "ERROR: ${t.message}"
         }
+    }
+
+    private companion object {
+        // Kompilace velké hry umí trvat i přes minutu
+        const val TIMEOUT_S = 150L
     }
 }

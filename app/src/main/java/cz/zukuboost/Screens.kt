@@ -38,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -90,10 +91,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
     ) {
         item {
             Column(Modifier.padding(top = 8.dp)) {
-                Row {
-                    Text("ZUKU", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                    Text("BOOST", color = NeonRed, fontSize = 34.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                }
+                GradientTitle("ZUKUBOOST", 36)
                 Text("GAME SPACE  ·  BEZ ROOTU", color = NeonCyan, fontSize = 11.sp, letterSpacing = 3.sp, fontWeight = FontWeight.Bold)
             }
         }
@@ -148,7 +146,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
                         }
                     }
                     Spacer(Modifier.height(18.dp))
-                    LaunchButton(enabled = s.busy == null) { s.launchGame(sel.pkg) }
+                    LaunchButton(enabled = s.busy == null && s.launch == null) { s.launchGame(sel.pkg) }
                     Spacer(Modifier.height(10.dp))
                     Text(
                         if (s.monitorOn) "● AUTO BOOST ZAPNUTÝ" else "○ AUTO BOOST VYPNUTÝ – zapne se při spuštění",
@@ -584,6 +582,35 @@ fun SettingsScreen(s: UiState, shizuku: Shell.State, tick: Int, onRequestShizuku
                     OptionRow(o, s.opts[o] == true) { v ->
                         s.opts[o] = v
                         s.prefs.setOpt(o, v)
+                    }
+                }
+                if (s.opts[Opt.SMART_COOL] == true) {
+                    var coolStart by remember { mutableIntStateOf(s.prefs.coolStartC) }
+                    TextButton(onClick = {
+                        val next = if (coolStart >= 47) 41 else coolStart + 1
+                        coolStart = next
+                        s.prefs.coolStartC = next
+                    }) {
+                        Text(
+                            "Chlazení začne při: $coolStart °C (2. stupeň ${coolStart + 3} °C, návrat pod ${coolStart - 3} °C)",
+                            color = NeonCyan,
+                            fontSize = 13.sp,
+                        )
+                    }
+                }
+                if (s.opts[Opt.EDGE_BLOCK] == true) {
+                    var width by remember { mutableIntStateOf(s.prefs.edgeWidthDp) }
+                    TextButton(onClick = {
+                        val next = when (width) {
+                            12 -> 16
+                            16 -> 24
+                            24 -> 32
+                            else -> 12
+                        }
+                        width = next
+                        s.prefs.edgeWidthDp = next
+                    }) {
+                        Text("Šířka blokovaných okrajů: $width dp (platí od další hry)", color = NeonCyan, fontSize = 13.sp)
                     }
                 }
             }

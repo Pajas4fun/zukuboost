@@ -11,10 +11,14 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
+import android.view.View
+import android.widget.FrameLayout
 import android.widget.TextView
 import java.util.Locale
 import kotlin.math.abs
@@ -83,6 +87,113 @@ class OverlayController(private val ctx: Context) {
     fun hide() {
         view?.let { runCatching { wm.removeView(it) } }
         view = null
+    }
+}
+
+/**
+ * Zámek dotyku (jako Touch protection u Samsungu / ochrana proti nechtěnému dotyku u OnePlus):
+ * průhledná vrstva přes celou obrazovku spolkne všechny dotyky. Odemčení podržením tlačítka 1,5 s.
+ * Systémová gesta (návrat, domů) fungují dál.
+ */
+class TouchLockController(private val ctx: Context, private val onUnlocked: () -> Unit) {
+
+    private val wm = ctx.getSystemService(WindowManager::class.java)
+    private val handler = Handler(Looper.getMainLooper())
+    private var root: FrameLayout? = null
+
+    val isLocked: Boolean get() = root != null
+
+    @SuppressLint("ClickableViewAccessibility", "SetTextI18n")
+    fun lock() {
+        if (root != null) return
+        val label = TextView(ctx).apply {
+            text = "🔒 Dotyk zamčený – podrž 1,5 s pro odemčení"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            setPadding(40, 24, 40, 24)
+            background = GradientDrawable().apply {
+                cornerRadius = 44f
+                setColor(0xDDFF2D55.toInt())
+            }
+        }
+        val frame = FrameLayout(ctx).apply {
+            setBackgroundColor(0x1A000000)
+            addView(
+                label,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    Gravity.TOP or Gravity.CENTER_HORIZONTAL,
+                ).apply { topMargin = 64 },
+            )
+            setOnTouchListener { _, _ -> true } // spolkne všechny dotyky mimo tlačítko
+        }
+        val unlockTask = Runnable {
+            unlock()
+            onUnlocked()
+        }
+        label.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    label.alpha = 0.6f
+                    handler.postDelayed(unlockTask, 1_500)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    label.alpha = 1f
+                    handler.removeCallbacks(unlockTask)
+                }
+            }
+            true
+        }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        )
+        runCatching { wm.addView(frame, params) }.onSuccess { root = frame }
+    }
+
+    fun unlock() {
+        handler.removeCallbacksAndMessages(null)
+        root?.let { runCatching { wm.removeView(it) } }
+        root = null
+    }
+}
+
+/** Blokované okraje (jako Blocked touch edges u ASUS ROG): pruhy vlevo a vpravo spolknou dotyk dlaně. */
+class EdgeBlockController(private val ctx: Context) {
+
+    private val wm = ctx.getSystemService(WindowManager::class.java)
+    private val views = mutableListOf<View>()
+
+    val isShown: Boolean get() = views.isNotEmpty()
+
+    @SuppressLint("ClickableViewAccessibility")
+    fun show(widthDp: Int) {
+        if (views.isNotEmpty()) return
+        val px = (widthDp * ctx.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        for (side in listOf(Gravity.LEFT, Gravity.RIGHT)) {
+            val v = View(ctx).apply { setOnTouchListener { _, _ -> true } }
+            val params = WindowManager.LayoutParams(
+                px,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT,
+            ).apply { gravity = side or Gravity.TOP }
+            runCatching { wm.addView(v, params) }.onSuccess { views += v }
+        }
+    }
+
+    fun hide() {
+        views.forEach { runCatching { wm.removeView(it) } }
+        views.clear()
     }
 }
 
@@ -157,26 +268,75 @@ class Stats(private val ctx: Context) {
     private var cpu: Float? = null
     private var gpu: Float? = null
     private var tick = 0
+    private var prevTotal = 0L
+    private var prevIdle = 0L
+    private var cpuLoad: Int? = null
+    private var gpuLoad: Int? = null
+    private var curGhz: Float? = null
+    private var maxGhz: Float? = null
 
-    /** CPU (typ 0) a GPU (typ 1) teploty z thermal HAL. */
-    private suspend fun readTemps() {
-        val out = runCatching { Shell.exec("dumpsys thermalservice") }.getOrNull() ?: return
+    /** Poslední hodnoty pro herní panel. */
+    val cpuTemp: Float? get() = cpu
+    var lastBatTemp: Float = 0f
+        private set
+    val cpuLoadPct: Int? get() = cpuLoad
+
+    /**
+     * Jedním voláním: teploty z thermal HAL, vytížení CPU (/proc/stat), aktuální a maximální takty CPU
+     * (pokles pod maximum = throttling) a vytížení GPU Adreno. Co systém nedovolí číst, se přeskočí.
+     */
+    private suspend fun readSensors() {
+        val out = runCatching {
+            Shell.exec(
+                "dumpsys thermalservice; echo '@@STAT'; head -1 /proc/stat 2>/dev/null; " +
+                    "echo '@@GPU'; cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage 2>/dev/null; " +
+                    "echo '@@CUR'; cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null; " +
+                    "echo '@@MAX'; cat /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq 2>/dev/null; echo '@@END'"
+            )
+        }.getOrNull() ?: return
+
+        fun section(name: String): String {
+            val a = out.indexOf("@@$name")
+            if (a < 0) return ""
+            val b = out.indexOf("@@", a + 2 + name.length).let { if (it < 0) out.length else it }
+            return out.substring(a + 2 + name.length, b)
+        }
+
+        // teploty
         val start = out.indexOf("Current temperatures from HAL")
-        if (start < 0) return
-        val end = out.indexOf("Current cooling devices", start).let { if (it < 0) out.length else it }
-        val byType = tempRe.findAll(out.substring(start, end)).mapNotNull { m ->
-            val value = m.groupValues[1].toFloatOrNull()
-            val type = m.groupValues[2].toIntOrNull()
-            if (value == null || type == null || value <= 0f || value > 150f) null else type to value
-        }.toList().groupBy({ it.first }, { it.second })
-        cpu = byType[0]?.maxOrNull()
-        gpu = byType[1]?.maxOrNull()
+        if (start >= 0) {
+            val end = out.indexOf("Current cooling devices", start).let { if (it < 0) out.length else it }
+            val byType = tempRe.findAll(out.substring(start, end)).mapNotNull { m ->
+                val value = m.groupValues[1].toFloatOrNull()
+                val type = m.groupValues[2].toIntOrNull()
+                if (value == null || type == null || value <= 0f || value > 150f) null else type to value
+            }.toList().groupBy({ it.first }, { it.second })
+            cpu = byType[0]?.maxOrNull()
+            gpu = byType[1]?.maxOrNull()
+        }
+
+        // vytížení CPU z rozdílu dvou měření
+        val stat = section("STAT").trim().split(Regex("\\s+")).drop(1).mapNotNull { it.toLongOrNull() }
+        if (stat.size >= 5) {
+            val idle = stat[3] + stat[4]
+            val total = stat.sum()
+            if (prevTotal > 0 && total > prevTotal) {
+                cpuLoad = (100 * (1 - (idle - prevIdle).toDouble() / (total - prevTotal))).toInt().coerceIn(0, 100)
+            }
+            prevTotal = total
+            prevIdle = idle
+        }
+
+        gpuLoad = Regex("(\\d+)").find(section("GPU"))?.value?.toIntOrNull()?.takeIf { it in 0..100 }
+        curGhz = section("CUR").lines().mapNotNull { it.trim().toLongOrNull() }.maxOrNull()?.let { it / 1_000_000f }
+        maxGhz = section("MAX").lines().mapNotNull { it.trim().toLongOrNull() }.maxOrNull()?.let { it / 1_000_000f }
     }
 
     suspend fun format(fps: Int?, session: SessionStats, elapsedMs: Long): String {
-        if (tick++ % 3 == 0) readTemps()
+        if (tick++ % 3 == 0) readSensors()
         val battery = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val batTemp = (battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
+        lastBatTemp = batTemp
         val voltageMv = battery?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0) ?: 0
         val watts = power(voltageMv)
         val thermal = if (Build.VERSION.SDK_INT >= 29) pm.currentThermalStatus else -1
@@ -200,6 +360,15 @@ class Stats(private val ctx: Context) {
             val label = thermalLabel(thermal)
             if (label.isNotEmpty()) append("  ").append(label)
             append('\n')
+            // Řádek jako Game Genie u ROG: vytížení a takty (aktuální/max = vidíš throttling)
+            val load = buildList {
+                cpuLoad?.let { add("CPU $it%") }
+                val c = curGhz
+                val m = maxGhz
+                if (c != null && m != null) add(String.format(Locale.US, "%.1f/%.1f GHz", c, m))
+                gpuLoad?.let { add("GPU $it%") }
+            }
+            if (load.isNotEmpty()) append(load.joinToString("  ")).append('\n')
             append(String.format(Locale.US, "⏱ %d:%02d", sec / 60, sec % 60))
         }
     }
