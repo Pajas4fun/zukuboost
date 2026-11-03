@@ -37,7 +37,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         private const val CHANNEL = "monitor"
         private const val CHANNEL_DND = "monitor_dnd"
         private const val NOTIF_ID = 1
-        private const val LEAVE_DELAY_MS = 3_000L
+        private const val LEAVE_DELAY_MS = 2_000L
         private const val POLL_MS = 1_500L
         private const val RETRY_MS = 10_000L
         const val THERMAL_LIMIT_C = 44f
@@ -76,11 +76,17 @@ class GameMonitorService : Service(), GamePanelController.Listener {
     private var touchLock: TouchLockController? = null
     private var edgeBlock: EdgeBlockController? = null
     private var panel: GamePanelController? = null
-    @Volatile private var lastChips: List<Pair<String, String>> = emptyList()
+    // Živá data pro herní panel
+    @Volatile private var lastFps: Int? = null
+    @Volatile private var lastCpu: Float? = null
+    @Volatile private var lastBat = 0f
+    private val fpsHistory = ArrayDeque<Int>()
     @Volatile private var recording = false
     private var recordPath = ""
     private var recordJob: Job? = null
     private var autoHzDone = false
+    private var ignoredFg: String? = null
+    private var ignoredFgSince = 0L
 
     // Chytré chlazení
     private var coolJob: Job? = null
@@ -200,7 +206,20 @@ class GameMonitorService : Service(), GamePanelController.Listener {
 
     override fun isEdgesOn() = edgeBlock?.isShown == true
 
-    override fun chips() = lastChips
+    override fun data(): PanelData {
+        val hist = synchronized(fpsHistory) { fpsHistory.toList() }
+        val bat = if (lastBat > 0f) lastBat else batteryTemp(this)
+        return PanelData(
+            fps = lastFps,
+            avg = session.avg,
+            min = session.min,
+            drops = session.drops,
+            cpu = lastCpu,
+            bat = bat,
+            history = hist,
+            measuring = overlayJob?.isActive == true,
+        )
+    }
 
     override fun gameName() = activeGame?.let { label(it) } ?: ""
 
@@ -313,6 +332,11 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         }
     }
 
+    /**
+     * Která appka je v popředí. Krátké přepnutí do „ignorovaných“ appek (systémová lišta, přihlášení Google,
+     * Game Turbo) boost neukončí – ale když v nich zůstaneš déle než 12 s (např. po zavření hry se vrátíš
+     * do seznamu her v Game Turbu), bere se to jako konec hry.
+     */
     @Suppress("DEPRECATION")
     private fun foreground(): String? {
         val usm = getSystemService(UsageStatsManager::class.java) ?: return lastForeground
@@ -322,14 +346,28 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         lastQueryEnd = now
         val events = usm.queryEvents(from, now)
         val e = UsageEvents.Event()
-        var pkg: String? = null
+        var latest: String? = null
+        var latestTime = 0L
         while (events.hasNextEvent()) {
             events.getNextEvent(e)
-            if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND && e.packageName !in IGNORED) {
-                pkg = e.packageName
+            if (e.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND) {
+                latest = e.packageName
+                latestTime = e.timeStamp
             }
         }
-        if (pkg != null) lastForeground = pkg
+        if (latest != null) {
+            if (latest in IGNORED) {
+                if (ignoredFg != latest) {
+                    ignoredFg = latest
+                    ignoredFgSince = latestTime
+                }
+            } else {
+                lastForeground = latest
+                ignoredFg = null
+            }
+        }
+        val ign = ignoredFg
+        if (ign != null && now - ignoredFgSince > 12_000) return ign
         return lastForeground
     }
 
@@ -382,18 +420,24 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         // Jas ztlumený chlazením vrátíme na hodnotu před ztlumením
         brightnessBeforeCool?.let { runCatching { BoostEngine.setBrightness(it) } }
         brightnessBeforeCool = null
+        prefs.coolBrightness = null
         stopOverlay()
         withContext(Dispatchers.Main) {
             touchLock?.unlock()
             edgeBlock?.hide()
             panel?.hide()
         }
-        lastChips = emptyList()
+        lastFps = null
+        lastCpu = null
+        lastBat = 0f
+        synchronized(fpsHistory) { fpsHistory.clear() }
         if (recording) {
             runCatching { BoostEngine.stopRecording() }
             finishRecording()
         }
-        runCatching { BoostEngine.restore(this) }
+        val hadBoost = prefs.boostActive
+        val restored = runCatching { BoostEngine.restore(this) }.isSuccess
+        if (restored && hadBoost) showToast("✓ Hra ukončena – nastavení vrácena")
 
         val elapsed = SystemClock.elapsedRealtime() - sessionStart
         val minutes = elapsed / 60_000
@@ -481,6 +525,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                         runCatching { BoostEngine.setSessionHz(low) }
                         if (brightnessBeforeCool == null) {
                             brightnessBeforeCool = runCatching { BoostEngine.dimBrightness(0.85f) }.getOrNull()
+                            prefs.coolBrightness = brightnessBeforeCool
                         }
                         lastChange = now
                         setStatus("🧊 Chlazení: ${low.toInt()} Hz, jas −15 % · baterie ${t.toInt()} °C")
@@ -501,6 +546,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                         }
                         brightnessBeforeCool?.let { runCatching { BoostEngine.setBrightness(it) } }
                         brightnessBeforeCool = null
+                        prefs.coolBrightness = null
                         lastChange = now
                         setStatus("Boost aktivní: ${label(pkg)} · zchladnuto, zpět ${base.toInt()} Hz")
                     }
@@ -552,11 +598,14 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                     if (fps != null && fps > 0) recentFps += fps
                     maybeAutoHz(pkg, recentFps)
                     val text = stats.format(fps, session, SystemClock.elapsedRealtime() - sessionStart)
-                    lastChips = buildList {
-                        add("FPS" to (fps?.toString() ?: "--"))
-                        add("PRŮMĚR" to (session.avg?.toString() ?: "--"))
-                        add("CPU" to (stats.cpuTemp?.let { "${it.toInt()}°" } ?: (stats.cpuLoadPct?.let { "$it%" } ?: "--")))
-                        add("BATERIE" to "${stats.lastBatTemp.toInt()}°")
+                    lastFps = fps
+                    lastCpu = stats.cpuTemp
+                    lastBat = stats.lastBatTemp
+                    if (fps != null) {
+                        synchronized(fpsHistory) {
+                            fpsHistory.addLast(fps)
+                            while (fpsHistory.size > 45) fpsHistory.removeFirst()
+                        }
                     }
                     val visible = overlay != null
                     if (visible) withContext(Dispatchers.Main) { overlay?.update(text) }

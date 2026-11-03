@@ -283,6 +283,20 @@ class Prefs(ctx: Context) {
 
     // ----- profil hry -----
 
+    /** Obnovovací frekvence zjištěné z dumpsys display (HyperOS je někdy v API nehlásí). */
+    var extraRates: List<Float>
+        get() = (sp.getString("extra_rates", "") ?: "").split(",").mapNotNull { it.toFloatOrNull() }
+        set(v) {
+            sp.edit().putString("extra_rates", v.joinToString(",")).apply()
+        }
+
+    /** Jas před ztlumením chlazením (null = neztlumeno) – vrací ho restore() i po pádu služby. */
+    var coolBrightness: String?
+        get() = sp.getString("cool_brightness", null)
+        set(v) {
+            sp.edit().putString("cool_brightness", v).commit()
+        }
+
     /** Teplota baterie, od které začne chytré chlazení (°C). */
     var coolStartC: Int
         get() = sp.getInt("cool_start", 44)

@@ -4,6 +4,16 @@ import android.app.ActivityManager
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.Image
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.blur
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,6 +75,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
     val ready = shizuku == Shell.State.READY
     var batTemp by remember { mutableFloatStateOf(0f) }
     var freeRam by remember { mutableFloatStateOf(0f) }
+    var totalRam by remember { mutableFloatStateOf(1f) }
 
     LaunchedEffect(Unit) {
         val am = ctx.getSystemService(ActivityManager::class.java)
@@ -72,6 +83,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
             batTemp = batteryTemp(ctx)
             val mi = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
             freeRam = mi.availMem / 1_073_741_824f
+            totalRam = (mi.totalMem / 1_073_741_824f).coerceAtLeast(1f)
             delay(2_000)
         }
     }
@@ -86,85 +98,154 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
     val lastSession = remember(tick, s.historyTick) { s.prefs.lastSession }
 
     LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        // --- hlavička ---
         item {
-            Column(Modifier.padding(top = 8.dp)) {
-                GradientTitle("ZUKUBOOST", 36)
-                Text("GAME SPACE  ·  BEZ ROOTU", color = NeonCyan, fontSize = 11.sp, letterSpacing = 3.sp, fontWeight = FontWeight.Bold)
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    GradientTitle("ZUKUBOOST", 34)
+                    Text("GAME SPACE", color = TextDim, fontSize = 11.sp, letterSpacing = 4.sp, fontWeight = FontWeight.Bold)
+                }
+                val c = if (ready) NeonGreen else NeonRed
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(c.copy(alpha = 0.12f))
+                        .border(1.dp, c.copy(alpha = 0.5f), RoundedCornerShape(50))
+                        .clickable { onOpenSettings() }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.size(7.dp).clip(CircleShape).background(c))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (ready) "ONLINE" else "OFFLINE", color = c, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                }
             }
         }
+
+        // --- kruhové ukazatele ---
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatChip(
-                    "SHIZUKU",
-                    if (ready) "ON" else "OFF",
-                    if (ready) NeonGreen else NeonRed,
-                    Modifier.weight(1f),
-                )
-                StatChip(
-                    "BATERIE",
-                    String.format(Locale.US, "%.1f°", batTemp),
-                    if (batTemp >= 42f) NeonRed else NeonCyan,
-                    Modifier.weight(1f),
-                )
-                StatChip("RAM", String.format(Locale.US, "%.1f GB", freeRam), NeonCyan, Modifier.weight(1f))
+            NeonCard(accent = NeonCyan) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    StatGauge(
+                        "BATERIE",
+                        String.format(Locale.US, "%.0f°", batTemp),
+                        (batTemp - 20f) / 30f,
+                        when {
+                            batTemp >= 44f -> NeonRed
+                            batTemp >= 40f -> NeonYellow
+                            else -> NeonGreen
+                        },
+                    )
+                    StatGauge(
+                        "VOLNÁ RAM",
+                        String.format(Locale.US, "%.1f", freeRam),
+                        freeRam / totalRam,
+                        NeonCyan,
+                    )
+                    StatGauge("DISPLEJ", "${s.maxHz}", s.maxHz / 144f, NeonPurple)
+                }
             }
         }
+
+        // --- vybraná hra ---
         item {
             if (sel == null) {
                 NeonCard(title = "Žádné hry") {
                     Text("Přidej hry a ZukuBoost je bude spouštět s boostem.", color = TextDim)
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(14.dp))
                     NeonButton("+ Přidat hry", onOpenGames)
                 }
             } else {
-                NeonCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        GameIcon(sel, 84)
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                sel.label,
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Black,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            val cap = s.caps[sel.pkg] ?: s.prefs.fpsCap(sel.pkg)
-                            val scale = s.scales[sel.pkg] ?: s.prefs.scale(sel.pkg)
-                            Row(
-                                Modifier.horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(CardBg)
+                        .border(
+                            1.dp,
+                            Brush.linearGradient(listOf(NeonRed.copy(alpha = 0.8f), Color.Transparent, NeonCyan.copy(alpha = 0.5f))),
+                            RoundedCornerShape(26.dp),
+                        ),
+                ) {
+                    // rozmazaná ikona hry jako pozadí karty
+                    sel.icon?.let { bmp ->
+                        Image(
+                            bitmap = bmp,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.matchParentSize().blur(40.dp).alpha(0.35f),
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .background(Brush.verticalGradient(listOf(Color.Transparent, CardBg.copy(alpha = 0.92f), CardBg))),
+                    )
+                    Column(Modifier.padding(18.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier
+                                    .shadow(20.dp, RoundedCornerShape(22.dp), ambientColor = NeonRed, spotColor = NeonRed)
+                                    .border(2.dp, Brush.linearGradient(listOf(NeonRed, NeonCyan)), RoundedCornerShape(22.dp)),
                             ) {
-                                ProfileChip(if (cap == 0) "FPS: MAX" else "FPS: $cap")
-                                ProfileChip("${(scale * 100).roundToInt()} %")
-                                ProfileChip("KILL: ${s.killList.size}", NeonRed)
+                                GameIcon(sel, 88)
+                            }
+                            Spacer(Modifier.width(16.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("PŘIPRAVENO", color = NeonGreen, fontSize = 10.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Black)
+                                Text(
+                                    sel.label,
+                                    fontSize = 23.sp,
+                                    fontWeight = FontWeight.Black,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                val cap = s.caps[sel.pkg] ?: s.prefs.fpsCap(sel.pkg)
+                                val scale = s.scales[sel.pkg] ?: s.prefs.scale(sel.pkg)
+                                Row(
+                                    Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    ProfileChip(if (cap == 0) "FPS MAX" else "$cap FPS")
+                                    ProfileChip("${(scale * 100).roundToInt()} %", NeonPurple)
+                                    ProfileChip("🧹 ${s.killList.size}", NeonRed)
+                                }
                             }
                         }
+                        Spacer(Modifier.height(20.dp))
+                        LaunchButton(enabled = s.busy == null && s.launch == null) { s.launchGame(sel.pkg) }
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            Modifier.fillMaxWidth().clickable { onOpenSettings() },
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            val c = if (s.monitorOn) NeonGreen else TextDim
+                            Box(Modifier.size(6.dp).clip(CircleShape).background(c))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (s.monitorOn) "Auto boost hlídá hry" else "Auto boost se zapne při spuštění",
+                                color = c,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
-                    Spacer(Modifier.height(18.dp))
-                    LaunchButton(enabled = s.busy == null && s.launch == null) { s.launchGame(sel.pkg) }
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        if (s.monitorOn) "● AUTO BOOST ZAPNUTÝ" else "○ AUTO BOOST VYPNUTÝ – zapne se při spuštění",
-                        color = if (s.monitorOn) NeonGreen else TextDim,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.clickable { onOpenSettings() },
-                    )
                 }
             }
         }
+
+        // --- knihovna her ---
         if (gameItems.isNotEmpty()) {
             item {
                 Column {
-                    SectionHeader("Tvoje hry")
-                    Spacer(Modifier.height(10.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SectionHeader("Knihovna her")
+                    Spacer(Modifier.height(12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(gameItems, key = { it.pkg }) { g ->
                             GameTile(g, g.pkg == s.selected) {
                                 s.selected = g.pkg
@@ -176,9 +257,10 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
                 }
             }
         }
+
         if (lastSession.isNotBlank()) {
             item {
-                NeonCard(title = "Poslední hra", accent = NeonCyan) {
+                NeonCard(title = "Poslední relace", accent = NeonPurple) {
                     Text(lastSession, fontWeight = FontWeight.Bold)
                 }
             }
@@ -187,7 +269,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
             item {
                 NeonCard(title = "Shizuku neběží", accent = NeonYellow) {
                     Text("Bez Shizuku se hry spustí bez boostu.", color = TextDim)
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(12.dp))
                     NeonButton("Otevřít nastavení", onOpenSettings, color = NeonYellow, outlined = true)
                 }
             }
@@ -197,14 +279,17 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
 
 @Composable
 fun GameIcon(app: AppItem, sizeDp: Int) {
-    val shape = CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp)
+    val shape = RoundedCornerShape((sizeDp / 4).dp)
     val icon = app.icon
     Box(
-        Modifier.size(sizeDp.dp).clip(shape).background(Color(0xFF1B1F2A)),
+        Modifier
+            .size(sizeDp.dp)
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(Color(0xFF1E2230), Color(0xFF12151D)))),
         contentAlignment = Alignment.Center,
     ) {
         if (icon != null) {
-            Image(bitmap = icon, contentDescription = null, modifier = Modifier.size((sizeDp - 8).dp))
+            Image(bitmap = icon, contentDescription = null, modifier = Modifier.size((sizeDp - 6).dp).clip(shape))
         } else {
             Text("🎮", fontSize = (sizeDp / 2).sp)
         }
@@ -213,17 +298,32 @@ fun GameIcon(app: AppItem, sizeDp: Int) {
 
 @Composable
 fun GameTile(app: AppItem, selected: Boolean, onClick: () -> Unit) {
-    val shape = CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp)
+    val shape = RoundedCornerShape(20.dp)
+    val tileScale by animateFloatAsState(if (selected) 1.06f else 1f, tween(200), label = "tile")
     Column(
-        Modifier.width(80.dp).clickable(onClick = onClick),
+        Modifier
+            .width(82.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
-            Modifier.border(if (selected) 2.dp else 1.dp, if (selected) NeonRed else Color(0xFF2A2F3C), shape),
+            Modifier
+                .padding(top = 4.dp)
+                .scale(tileScale)
+                .then(
+                    if (selected) {
+                        Modifier
+                            .shadow(14.dp, shape, ambientColor = NeonRed, spotColor = NeonRed)
+                            .border(2.dp, Brush.linearGradient(listOf(NeonRed, NeonCyan)), shape)
+                    } else {
+                        Modifier.border(1.dp, Color.White.copy(alpha = 0.08f), shape)
+                    }
+                ),
         ) {
             GameIcon(app, 72)
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             app.label,
             fontSize = 11.sp,
@@ -237,16 +337,24 @@ fun GameTile(app: AppItem, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun AddTile(onClick: () -> Unit) {
-    val shape = CutCornerShape(topStart = 14.dp, bottomEnd = 14.dp)
-    Column(Modifier.width(80.dp).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+    val shape = RoundedCornerShape(20.dp)
+    Column(
+        Modifier.width(82.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Box(
-            Modifier.size(72.dp).clip(shape).border(1.dp, NeonCyan.copy(alpha = 0.6f), shape),
+            Modifier
+                .padding(top = 4.dp)
+                .size(72.dp)
+                .clip(shape)
+                .background(NeonCyan.copy(alpha = 0.06f))
+                .border(1.dp, NeonCyan.copy(alpha = 0.5f), shape),
             contentAlignment = Alignment.Center,
         ) {
-            Text("+", color = NeonCyan, fontSize = 32.sp, fontWeight = FontWeight.Black)
+            Text("+", color = NeonCyan, fontSize = 30.sp, fontWeight = FontWeight.Light)
         }
-        Spacer(Modifier.height(6.dp))
-        Text("PŘIDAT", fontSize = 11.sp, color = NeonCyan, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text("Přidat", fontSize = 11.sp, color = NeonCyan, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -678,6 +786,35 @@ fun SettingsScreen(s: UiState, shizuku: Shell.State, tick: Int, onRequestShizuku
         // ---------- Systém ----------
         item { SectionHeader("Systém") }
         item {
+            val list = s.obstacles
+            NeonCard(title = "Herní překážky", accent = if (list.isNullOrEmpty()) NeonGreen else NeonYellow) {
+                Text(
+                    "Nastavení z vývojářských možností, která hraní zpomalují (často zapnutá omylem nebo podle „gaming tipů“).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextDim,
+                )
+                Spacer(Modifier.height(8.dp))
+                when {
+                    list == null -> Text("Zjistí se, až poběží Shizuku.", color = TextDim)
+                    list.isEmpty() -> Text("✅ Nic nebrzdí", fontWeight = FontWeight.Bold, color = NeonGreen)
+                    else -> {
+                        list.forEach { o ->
+                            Text("⚠️ ${o.title}", fontWeight = FontWeight.Bold)
+                            Text(o.why, style = MaterialTheme.typography.bodySmall, color = TextDim)
+                            Spacer(Modifier.height(6.dp))
+                        }
+                        NeonButton("Opravit vše", {
+                            s.runTask("Opravuji…") {
+                                val msg = BoostEngine.fixObstacles(list)
+                                s.obstacles = BoostEngine.findObstacles()
+                                msg
+                            }
+                        }, enabled = ready && s.busy == null, color = NeonYellow)
+                    }
+                }
+            }
+        }
+        item {
             NeonCard(title = "Zmrazování appek na pozadí", accent = NeonCyan) {
                 Text(
                     "Appky v paměti se 10 s po odchodu na pozadí zmrazí a neberou hře procesor. " +
@@ -774,13 +911,17 @@ fun SettingsScreen(s: UiState, shizuku: Shell.State, tick: Int, onRequestShizuku
 
 @Composable
 fun ScreenTitle(text: String) {
-    Text(
-        text.uppercase(),
-        fontSize = 26.sp,
-        fontWeight = FontWeight.Black,
-        letterSpacing = 2.sp,
-        modifier = Modifier.padding(top = 8.dp),
-    )
+    Column(Modifier.padding(top = 8.dp)) {
+        GradientTitle(text.uppercase(), 26)
+        Box(
+            Modifier
+                .padding(top = 6.dp)
+                .width(42.dp)
+                .height(3.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(Brush.horizontalGradient(listOf(NeonRed, NeonCyan))),
+        )
+    }
 }
 
 @Composable

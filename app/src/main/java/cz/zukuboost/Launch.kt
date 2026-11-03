@@ -24,7 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CutCornerShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -180,7 +180,7 @@ fun LaunchOverlay(ui: LaunchUi) {
                     Modifier
                         .size(96.dp)
                         .scale(pulse)
-                        .clip(CutCornerShape(topStart = 18.dp, bottomEnd = 18.dp))
+                        .clip(RoundedCornerShape(28.dp))
                         .background(Color(0xFF1B1F2A)),
                     contentAlignment = Alignment.Center,
                 ) {

@@ -214,15 +214,16 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     var selected by mutableStateOf(prefs.lastGame)
     var historyTick by mutableIntStateOf(0)
     var launch by mutableStateOf<LaunchUi?>(null)
+    var obstacles by mutableStateOf<List<BoostEngine.Obstacle>?>(null)
 
     val scales = mutableStateMapOf<String, Float>()
     val caps = mutableStateMapOf<String, Int>()
     val opts = mutableStateMapOf<Opt, Boolean>().apply { Opt.entries.forEach { put(it, prefs.opt(it)) } }
 
-    val capOptions: List<Int> = run {
-        val maxHz = BoostEngine.refreshRates(ctx).maxOrNull()?.roundToInt() ?: 60
-        listOf(0, 30, 45, 60, 90, 120, 144).filter { it == 0 || it <= maxHz }
-    }
+    var maxHz by mutableIntStateOf(BoostEngine.refreshRates(ctx).maxOrNull()?.roundToInt() ?: 60)
+
+    val capOptions: List<Int>
+        get() = listOf(0, 30, 45, 60, 90, 120, 144).filter { it == 0 || it <= maxHz + 1 }
 
     fun toast(msg: String) {
         scope.launch {
@@ -298,11 +299,14 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
         launch = ui
         scope.launch {
           try {
-            val ready = Shell.state() == Shell.State.READY
-            val titles = if (ready) {
-                BoostEngine.launchSteps(ctx, pkg) + "Hra připravena"
-            } else {
-                listOf("Shizuku neběží – spouštím bez boostu")
+            val shizukuOk = Shell.state() == Shell.State.READY
+            // Bez přístupu k využití by po hře nikdo boost nevrátil – raději ho vůbec nespouštíme
+            val usageOk = hasUsageAccess(ctx)
+            val ready = shizukuOk && usageOk
+            val titles = when {
+                ready -> BoostEngine.launchSteps(ctx, pkg) + "Hra připravena"
+                !shizukuOk -> listOf("Shizuku neběží – spouštím bez boostu")
+                else -> listOf("Chybí přístup k využití – spouštím bez boostu")
             }
             ui.steps = titles.map { LaunchStep(it, 0) }
             val before = freeRamMb(ctx)
@@ -330,9 +334,8 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
             // Auto boost hlídá hru a po jejím konci vše vrátí
             var note = ""
             if (result?.isFailure == true) note = "Boost se nepodařil: ${result.exceptionOrNull()?.message}"
-            if (!GameMonitorService.running && !startMonitor()) {
-                note = "Zapni přístup k využití v Nastavení, jinak se boost po hře nevrátí"
-            }
+            if (ready && !GameMonitorService.running) startMonitor()
+            if (shizukuOk && !usageOk) note = "Zapni přístup k využití v Nastavení → Oprávnění"
             ui.phase = "SPOUŠTÍM HRU"
             delay(550)
             val started = runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
@@ -387,6 +390,8 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
                 s.driverApps = runCatching { BoostEngine.gameDriverApps() }.getOrDefault(emptySet())
             }
             s.gpuTuner = runCatching { BoostEngine.gpuTunerEnabled() }.getOrDefault(false)
+            s.obstacles = runCatching { BoostEngine.findObstacles() }.getOrNull()
+            runCatching { BoostEngine.detectDisplayRates(ctx) }.getOrNull()?.maxOrNull()?.let { s.maxHz = it.roundToInt() }
             runCatching { BoostEngine.ensureFreezer(ctx) }
             s.freezer = runCatching { BoostEngine.freezerState() }.getOrNull()
         }
@@ -395,23 +400,7 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         containerColor = Bg,
-        bottomBar = {
-            NavigationBar(containerColor = Color(0xFF0B0D12)) {
-                TABS.forEachIndexed { i, (icon, label) ->
-                    NavigationBarItem(
-                        selected = tab == i,
-                        onClick = { tab = i },
-                        icon = { Text(icon, fontSize = 20.sp) },
-                        label = { Text(label, fontSize = 11.sp, maxLines = 1) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedTextColor = NeonRed,
-                            unselectedTextColor = TextDim,
-                            indicatorColor = NeonRed.copy(alpha = 0.18f),
-                        ),
-                    )
-                }
-            }
-        },
+        bottomBar = { FloatingNavBar(TABS, tab) { tab = it } },
     ) { inner ->
         Box(
             Modifier

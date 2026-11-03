@@ -80,6 +80,12 @@ object BoostEngine {
         "com.miui.cloudbackup",
         "com.miui.gallery",
         "com.google.android.apps.photos",
+        // Xiaomi propojení zařízení / sdílení obrazovky – neustále skenují Wi-Fi a Bluetooth
+        "com.xiaomi.mi_connect_service",
+        "com.milink.service",
+        // Analýza obsahu obrazovky a „rychlé aplikace“ běžící na pozadí
+        "com.miui.contentcatcher",
+        "com.miui.hybrid",
     )
 
     private fun ns(id: String) = id.substringBefore('/')
@@ -116,9 +122,27 @@ object BoostEngine {
         return parseKv(Shell.exec(script))
     }
 
+    /**
+     * Podporované Hz. HyperOS v API občas nevrací všechny režimy (např. jen do 90 Hz),
+     * proto přidáváme i hodnoty zjištěné z dumpsys display.
+     */
     fun refreshRates(ctx: Context): List<Float> {
         val display = ctx.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)
-        return display?.supportedModes?.map { it.refreshRate }?.distinct()?.sorted() ?: listOf(60f)
+        val api = display?.supportedModes?.map { it.refreshRate } ?: emptyList()
+        val all = (api + Prefs(ctx).extraRates).filter { it in 24f..241f }
+        return all.distinctBy { it.roundToInt() }.sorted().ifEmpty { listOf(60f) }
+    }
+
+    /** Přečte skutečné režimy displeje přes dumpsys (jen hodnoty od 60 Hz výš). */
+    suspend fun detectDisplayRates(ctx: Context): List<Float> {
+        val out = Shell.exec("dumpsys display | grep -oE '(fps|refreshRate|peakRefreshRate)=[0-9.]+' | sort -u")
+        val found = Regex("=([0-9.]+)").findAll(out)
+            .mapNotNull { it.groupValues[1].toFloatOrNull() }
+            .filter { it in 59f..241f }
+            .distinctBy { it.roundToInt() }
+            .toList()
+        if (found.isNotEmpty()) Prefs(ctx).extraRates = found
+        return refreshRates(ctx)
     }
 
     /** Hz, na kterých hra startuje (bez chlazení). */
@@ -182,6 +206,7 @@ object BoostEngine {
         val p = Prefs(ctx)
         // Hz klíče ukládáme i pro chytré chlazení (mění Hz za běhu), zapisujeme je jen s volbou REFRESH
         val hzKeys = if (p.opt(Opt.REFRESH) || p.opt(Opt.SMART_COOL)) detectHzKeys() else emptyList()
+        if (hzKeys.isNotEmpty()) runCatching { detectDisplayRates(ctx) }
 
         // Ukládáme originál každého klíče, který ještě uložený není.
         // Díky tomu se vrátí i nastavení zapnutá uprostřed hraní.
@@ -312,7 +337,8 @@ object BoostEngine {
         }
 
         if (p.opt(Opt.PROTECT_VOICE)) {
-            val targets = VOICE_APPS.filter { it != pkg && it !in p.killList && isInstalled(ctx, it) }
+            // Hlasové appky + samotná hra: systém je během hraní neuspí ani neomezí
+            val targets = (VOICE_APPS.filter { it != pkg && it !in p.killList && isInstalled(ctx, it) } + pkg).distinct()
             if (targets.isNotEmpty()) {
                 val whitelist = Shell.exec("dumpsys deviceidle whitelist")
                 val added = targets.filter { !whitelist.contains(it) }
@@ -512,6 +538,11 @@ object BoostEngine {
         val p = Prefs(ctx)
         if (!p.boostActive) return
         runCatching { restoreNotifications(ctx, p) }
+        // Jas ztlumený chytrým chlazením (kdyby služba spadla dřív, než ho vrátila)
+        p.coolBrightness?.let { b ->
+            runCatching { setBrightness(b) }
+            p.coolBrightness = null
+        }
 
         val cmds = mutableListOf<String>()
         for ((id, value) in p.originals()) {
@@ -617,6 +648,57 @@ object BoostEngine {
     /** setting = uložená hodnota, active = co Android opravdu používá (null = nejde zjistit). */
     data class FreezerInfo(val setting: String, val active: Boolean?)
 
+    /**
+     * Herní překážka = nastavení (často zapnuté omylem nebo podle „gaming tipů“), které hraní zhoršuje.
+     * fix = příkaz, který ho vypne.
+     */
+    data class Obstacle(val id: String, val title: String, val why: String, val fix: String)
+
+    private val OBSTACLES = listOf(
+        Triple("settings get system show_touches", "1", Obstacle(
+            "touches", "Zobrazování dotyků", "Kreslí kolečko pod každým dotykem – zbytečná zátěž a rušení.",
+            "settings put system show_touches 0",
+        )),
+        Triple("settings get system pointer_location", "1", Obstacle(
+            "pointer", "Umístění ukazatele", "Překryv se souřadnicemi dotyku – zátěž vykreslování.",
+            "settings put system pointer_location 0",
+        )),
+        Triple("settings get global always_finish_activities", "1", Obstacle(
+            "finish", "Nezachovávat aktivity", "Hra se při každém odskočení do jiné appky zavře a načítá znovu.",
+            "settings put global always_finish_activities 0",
+        )),
+        Triple("getprop debug.egl.force_msaa", "true", Obstacle(
+            "msaa", "Vynutit 4× MSAA", "Populární „tip“, který ve hrách výrazně zatěžuje GPU a zvyšuje teplotu.",
+            "setprop debug.egl.force_msaa false",
+        )),
+        Triple("getprop debug.hwui.profile", "visual_bars", Obstacle(
+            "profile", "Profil vykreslování GPU (pruhy)", "Kreslí graf přes obrazovku – zátěž navíc.",
+            "setprop debug.hwui.profile false",
+        )),
+        Triple("getprop debug.hwui.overdraw", "show", Obstacle(
+            "overdraw", "Ladit překreslování GPU", "Obarvuje obraz a zpomaluje vykreslování.",
+            "setprop debug.hwui.overdraw false",
+        )),
+        Triple("getprop debug.layout", "true", Obstacle(
+            "layout", "Zobrazit hranice rozvržení", "Kreslí rámečky kolem všech prvků – zpomaluje UI.",
+            "setprop debug.layout false",
+        )),
+    )
+
+    /** Vrátí nalezené překážky (čte se jedním voláním). */
+    suspend fun findObstacles(): List<Obstacle> {
+        val script = OBSTACLES.mapIndexed { i, (cmd, _, _) -> "echo \"$i=\$($cmd)\"" }.joinToString("; ")
+        val values = parseKv(Shell.exec(script))
+        return OBSTACLES.filterIndexed { i, (_, bad, _) -> values[i.toString()]?.trim() == bad }.map { it.third }
+    }
+
+    /** Opraví všechny nalezené překážky; běžící appky si debug vlastnosti načtou znovu. */
+    suspend fun fixObstacles(list: List<Obstacle>): String {
+        if (list.isEmpty()) return "Nic k opravě"
+        Shell.exec((list.map { it.fix } + "service call activity 1599295570 >/dev/null 2>&1").joinToString("; "))
+        return "Opraveno: ${list.joinToString { it.title }}. Hru spusť znovu."
+    }
+
     /** Zmrazování appek v cache: appky na pozadí nebrání hře v CPU. */
     suspend fun freezerState(): FreezerInfo {
         val out = Shell.exec(
@@ -660,6 +742,8 @@ object BoostEngine {
         val game = pkg?.takeIf { PKG_RE.matches(it) }
         val script = buildList {
             add("echo '== Displej =='")
+            add("echo \"Režimy: \$(dumpsys display | grep -oE 'fps=[0-9.]+' | sort -u | tr '\\n' ' ')\"")
+            add("echo \"peak=\$(settings get system peak_refresh_rate) min=\$(settings get system min_refresh_rate) user=\$(settings get secure user_refresh_rate) miui=\$(settings get system miui_refresh_rate)\"")
             add("dumpsys display | grep -m 4 -E 'mActiveMode|renderFrameRate|mActiveRefreshRate|refreshRate='")
             add("echo; echo '== Thermal =='")
             add("dumpsys thermalservice | grep -m 3 -E 'IsStatusOverride|Thermal Status'")
@@ -776,6 +860,15 @@ object BoostEngine {
             "cmd notification allow_dnd $me", // přístup k pravidlům Nerušit (úplné skrytí oznámení)
         )
         if (Build.VERSION.SDK_INT >= 33) cmds += "pm grant $me android.permission.POST_NOTIFICATIONS"
+        if (isXiaomi()) {
+            cmds += "cmd appops set $me 10008 allow 2>/dev/null" // MIUI/HyperOS Autostart
+            // Trvale na seznam „Bez omezení“ – jinak HyperOS službu uspí a po hře by nešlo nic vrátit
+            val cur = Shell.exec("settings get system MILLET_NO_RESTRICT_APP").trim()
+            val empty = cur.isEmpty() || cur == "null"
+            if (empty || (VALUE_RE.matches(cur) && me !in cur.split(","))) {
+                cmds += put(MILLET, if (empty) me else "$cur,$me")
+            }
+        }
         val out = Shell.exec(cmds.joinToString("; "))
         val errors = out.lines().map { it.trim() }.filter {
             it.contains("Exception") || it.startsWith("Error") || it.contains("not allowed", ignoreCase = true)

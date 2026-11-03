@@ -1,4 +1,4 @@
-# ⚡ ZukuBoost 3.0.1
+# ⚡ ZukuBoost 3.3.1
 
 Herní booster pro Android přes Shizuku / Shizuku Next. Bez rootu.
 
@@ -25,6 +25,38 @@ Po odchodu ze hry (3 s mimo hru) nebo zhasnutí displeje se vše vrátí.
 - **Skrytý výkonový režim Xiaomi:** tlačítko otevře systémový výběr Úspora / Vyvážený / Výkon
 - **Kontrola zápisu nastavení:** HyperOS vyžaduje v Možnostech pro vývojáře zapnout
   *Ladění USB (Bezpečnostní nastavení)*, jinak shell nemůže měnit systémová nastavení
+
+## 3.3.1 – opravy
+- Spuštění hry bez přístupu k využití už boost nezapne (nešel by po hře vrátit)
+- Jas ztlumený chlazením se vrátí i po pádu služby
+- Hláška „nastavení vrácena“ jen když se opravdu něco vracelo
+- Rotující rámeček panelu po 10 s zastaví (nezatěžuje GPU, když panel zůstane otevřený)
+- Přihlášení Google/Game Turbo do 12 s boost neukončí
+
+## 3.3 – HUD herní panel
+- Rotující neonový rámeček s HUD značkami, blikající LIVE
+- Velké živé FPS (zčervená při propadu) s grafem posledních ~45 s, ø/min/propady
+- Tepelné pruhy CPU a baterie (zelená → žlutá → červená), data se obnovují každou sekundu
+- Kulatá akční tlačítka se září, postupné objevení při vysunutí
+
+## 3.2 – nový vzhled
+- Skleněné karty s přechodovými rámečky, zaoblené tvary, tlačítka-pilulky s odezvou na stisk
+- Plovoucí spodní navigace, kruhové ukazatele (baterie, volná RAM, Hz displeje), stav ONLINE/OFFLINE
+- Karta hry s rozmazanou ikonou v pozadí, zářící ikona, tlačítko SPUSTIT HRU s přejíždějícím odleskem
+- Ikona u každé volby v Nastavení, nadpisy s přechodem
+
+## 3.1
+- **Herní překážky** (Nastavení → Systém): najde a jedním klepnutím vypne nastavení, která hraní zpomalují –
+  Vynutit 4× MSAA, Nezachovávat aktivity, zobrazování dotyků, umístění ukazatele, profil GPU, překreslování, hranice rozvržení
+- Utlumení žroutů navíc: Xiaomi propojení zařízení (mi_connect, MiLink), Content catcher, Rychlé aplikace
+- Ochrana proti uspání teď platí i pro samotnou hru (krátké odskočení do jiné appky ji neuspí)
+
+## 3.0.2
+- 120 Hz: podporované frekvence se čtou i z `dumpsys display` (HyperOS je v API někdy neukáže) – FPS limit nabídne 120/144
+- Vrácení po konci hry: kratší čekání (2 s), návrat do Game Turba po zavření hry se už bere jako konec hry,
+  hláška „✓ nastavení vrácena“
+- ZukuBoost se při „Nastavit vše“ zapíše do HyperOS „Bez omezení“ + Autostart, aby ho systém neuspal
+- Diagnostika ukazuje režimy displeje a všechny Hz klíče
 
 ## 3.0.1
 - Chytré chlazení: výchozí hranice 44 °C (2. stupeň 47 °C, návrat pod 41 °C), nastavitelná 41–47 °C;
