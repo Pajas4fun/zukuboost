@@ -83,7 +83,7 @@ fun GradientTitle(text: String, fontSize: Int) {
     Text(
         text,
         color = Color.White,
-        fontFamily = Display,
+        fontFamily = ChakraPetch,
         fontWeight = FontWeight.Bold,
         fontSize = fontSize.sp,
         letterSpacing = 0.5.sp,
@@ -162,14 +162,14 @@ fun LaunchOverlay(ui: LaunchUi) {
             Text(
                 if (ui.phase.isEmpty()) "${(progress * 100).toInt()} %" else ui.phase,
                 color = if (ui.phase.isEmpty()) NeonCyan else NeonGreen,
-                fontFamily = Display,
+                fontFamily = ChakraPetch,
                 fontWeight = FontWeight.Bold,
                 fontSize = if (ui.phase.isEmpty()) 40.sp else 24.sp,
             )
             Text(
                 ui.label,
                 color = Color.White,
-                fontFamily = Display,
+                fontFamily = ChakraPetch,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 20.sp,
                 maxLines = 1,
@@ -182,11 +182,11 @@ fun LaunchOverlay(ui: LaunchUi) {
             Row(Modifier.fillMaxWidth()) {
                 Column(Modifier.weight(1f)) {
                     Text("RAM freed", color = TextDim, fontSize = 12.sp)
-                    Text("+$freed MB", color = NeonGreen, fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text("+$freed MB", color = NeonGreen, fontFamily = ChakraPetch, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 }
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                     Text("Closed", color = TextDim, fontSize = 12.sp)
-                    Text("${ui.killed} apps", color = NeonRed, fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text("${ui.killed} apps", color = NeonRed, fontFamily = ChakraPetch, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 }
             }
             Spacer(Modifier.height(14.dp))

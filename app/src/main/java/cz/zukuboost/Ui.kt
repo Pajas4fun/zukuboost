@@ -86,7 +86,7 @@ val TextDim = Color(0xFF8C90A8) // Haze
 val Disabled = Color(0xFF232634)
 
 /** Chakra Petch – hranaté technické písmo pro nadpisy, čísla a tlačítka. Tělo textu zůstává systémové. */
-val Display = FontFamily(
+val ChakraPetch = FontFamily(
     Font(R.font.chakra_medium, FontWeight.Medium),
     Font(R.font.chakra_semibold, FontWeight.SemiBold),
     Font(R.font.chakra_bold, FontWeight.Bold),
@@ -181,7 +181,7 @@ fun HudMetric(label: String, value: String, fraction: Float, color: Color) {
         SegmentBar(fraction, color, Modifier.weight(1f).height(10.dp))
         Text(
             value,
-            fontFamily = Display,
+            fontFamily = ChakraPetch,
             fontWeight = FontWeight.Bold,
             fontSize = 16.sp,
             textAlign = TextAlign.End,
@@ -218,11 +218,11 @@ fun ZukuTheme(content: @Composable () -> Unit) {
         ),
         typography = Typography().let { t ->
             t.copy(
-                headlineLarge = t.headlineLarge.copy(fontFamily = Display, fontWeight = FontWeight.Bold),
-                headlineMedium = t.headlineMedium.copy(fontFamily = Display, fontWeight = FontWeight.Bold),
-                titleLarge = t.titleLarge.copy(fontFamily = Display, fontWeight = FontWeight.SemiBold),
-                titleMedium = t.titleMedium.copy(fontFamily = Display, fontWeight = FontWeight.SemiBold),
-                labelLarge = t.labelLarge.copy(fontFamily = Display, fontWeight = FontWeight.SemiBold),
+                headlineLarge = t.headlineLarge.copy(fontFamily = ChakraPetch, fontWeight = FontWeight.Bold),
+                headlineMedium = t.headlineMedium.copy(fontFamily = ChakraPetch, fontWeight = FontWeight.Bold),
+                titleLarge = t.titleLarge.copy(fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold),
+                titleMedium = t.titleMedium.copy(fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold),
+                labelLarge = t.labelLarge.copy(fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold),
             )
         },
         content = content,
@@ -289,7 +289,7 @@ fun NeonCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(width = 3.dp, height = 16.dp).clip(RoundedCornerShape(2.dp)).background(accent))
                 Spacer(Modifier.width(10.dp))
-                Text(title, color = Color.White, fontFamily = Display, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text(title, color = Color.White, fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             }
             Spacer(Modifier.height(12.dp))
         }
@@ -302,7 +302,7 @@ fun SectionHeader(text: String, color: Color = NeonCyan) {
     Text(
         text,
         color = TextDim,
-        fontFamily = Display,
+        fontFamily = ChakraPetch,
         fontWeight = FontWeight.SemiBold,
         fontSize = 14.sp,
         letterSpacing = 0.4.sp,
@@ -346,7 +346,7 @@ fun NeonButton(
                 outlined -> color
                 else -> Color.White
             },
-            fontFamily = Display,
+            fontFamily = ChakraPetch,
             fontWeight = FontWeight.SemiBold,
             fontSize = 15.sp,
             letterSpacing = 0.3.sp,
@@ -418,7 +418,7 @@ fun LaunchButton(enabled: Boolean, onClick: () -> Unit) {
                 Text(
                     "Launch game",
                     color = if (enabled) Color.White else TextDim,
-                    fontFamily = Display,
+                    fontFamily = ChakraPetch,
                     fontWeight = FontWeight.Bold,
                     fontSize = 21.sp,
                     letterSpacing = 0.5.sp,
@@ -442,7 +442,7 @@ fun StatChip(label: String, value: String, color: Color, modifier: Modifier = Mo
     ) {
         Text(label, color = TextDim, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(2.dp))
-        Text(value, color = color, fontSize = 19.sp, fontFamily = Display, fontWeight = FontWeight.Bold)
+        Text(value, color = color, fontSize = 19.sp, fontFamily = ChakraPetch, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -476,7 +476,7 @@ fun StatGauge(label: String, value: String, fraction: Float, color: Color, modif
                     style = Stroke(stroke, cap = StrokeCap.Round),
                 )
             }
-            Text(value, color = Color.White, fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+            Text(value, color = Color.White, fontFamily = ChakraPetch, fontWeight = FontWeight.Bold, fontSize = 19.sp)
         }
         Text(label, color = TextDim, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
@@ -495,7 +495,7 @@ fun ProfileChip(text: String, color: Color = NeonCyan) {
             text,
             color = Color.White,
             fontSize = 12.sp,
-            fontFamily = Display,
+            fontFamily = ChakraPetch,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
         )
@@ -579,7 +579,7 @@ fun FloatingNavBar(items: List<Pair<String, String>>, selected: Int, onSelect: (
                         Text(icon, fontSize = 18.sp)
                         if (isSel) {
                             Spacer(Modifier.width(6.dp))
-                            Text(label, color = Color.White, fontFamily = Display, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
+                            Text(label, color = Color.White, fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
                         }
                     }
                     Spacer(Modifier.height(5.dp))
@@ -630,7 +630,7 @@ fun BusyOverlay(text: String) {
             Text(
                 text,
                 color = Color.White,
-                fontFamily = Display,
+                fontFamily = ChakraPetch,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 16.sp,
                 textAlign = TextAlign.Center,

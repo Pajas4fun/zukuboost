@@ -125,7 +125,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
                 ) {
                     Diamond(c)
                     Spacer(Modifier.width(7.dp))
-                    Text(if (ready) "Connected" else "Shizuku not running", color = c, fontSize = 13.sp, fontFamily = Display, fontWeight = FontWeight.SemiBold)
+                    Text(if (ready) "Connected" else "Shizuku not running", color = c, fontSize = 13.sp, fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -181,7 +181,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Diamond(NeonGreen, 6.dp)
                                 Spacer(Modifier.width(6.dp))
-                                Text("Ready to boost", color = NeonGreen, fontSize = 13.sp, fontFamily = Display, fontWeight = FontWeight.SemiBold)
+                                Text("Ready to boost", color = NeonGreen, fontSize = 13.sp, fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold)
                             }
                         }
                         Spacer(Modifier.height(8.dp))
@@ -189,7 +189,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
                             sel.label,
                             fontSize = 34.sp,
                             lineHeight = 36.sp,
-                            fontFamily = Display,
+                            fontFamily = ChakraPetch,
                             fontWeight = FontWeight.Bold,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
@@ -245,7 +245,7 @@ fun HomeScreen(s: UiState, shizuku: Shell.State, tick: Int, onOpenGames: () -> U
             item {
                 Column {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.Bottom) {
-                        Text("Game library", fontFamily = Display, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                        Text("Game library", fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
                         Spacer(Modifier.weight(1f))
                         Text(
                             when (gameItems.size) {
@@ -507,7 +507,7 @@ fun KillListScreen(s: UiState) {
                             Text(
                                 name,
                                 color = if (sel) Color.White else TextDim,
-                                fontFamily = Display,
+                                fontFamily = ChakraPetch,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 14.sp,
                             )
@@ -1220,7 +1220,7 @@ fun DeviceCard(s: UiState, ready: Boolean) {
             )
             return@NeonCard
         }
-        Text(d.model, fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+        Text(d.model, fontFamily = ChakraPetch, fontWeight = FontWeight.Bold, fontSize = 22.sp)
         Spacer(Modifier.height(10.dp))
         listOf(
             "System" to d.skin,
@@ -1234,7 +1234,7 @@ fun DeviceCard(s: UiState, ready: Boolean) {
             }
         }
         Spacer(Modifier.height(12.dp))
-        Text("Recommendations for this phone", fontFamily = Display, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+        Text("Recommendations for this phone", fontFamily = ChakraPetch, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         DeviceDetector.recommend(d).tips.forEach { tip ->
             Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.Top) {
                 Box(Modifier.padding(top = 6.dp)) { Diamond(NeonCyan, 7.dp) }
