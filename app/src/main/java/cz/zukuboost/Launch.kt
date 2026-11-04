@@ -39,6 +39,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.PathMeasure
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.text.TextStyle
@@ -48,71 +51,52 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Statické herní pozadí: záře v rozích a jemná diagonální mřížka (bez animace = nežere baterii). */
+/** Statické pozadí: dvě měkké záře v rozích, nic víc (bez animace = nežere baterii). */
 @Composable
 fun GamingBackground() {
     Canvas(Modifier.fillMaxSize()) {
         drawRect(Bg)
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(NeonRed.copy(alpha = 0.22f), Color.Transparent),
-                center = Offset(0f, 0f),
-                radius = size.width * 0.9f,
+                listOf(NeonRed.copy(alpha = 0.16f), Color.Transparent),
+                center = Offset(size.width * 0.1f, 0f),
+                radius = size.width * 0.85f,
             ),
-            radius = size.width * 0.9f,
-            center = Offset(0f, 0f),
+            radius = size.width * 0.85f,
+            center = Offset(size.width * 0.1f, 0f),
         )
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(NeonCyan.copy(alpha = 0.12f), Color.Transparent),
-                center = Offset(size.width, size.height),
+                listOf(NeonPurple.copy(alpha = 0.10f), Color.Transparent),
+                center = Offset(size.width, size.height * 0.85f),
                 radius = size.width,
             ),
             radius = size.width,
-            center = Offset(size.width, size.height),
+            center = Offset(size.width, size.height * 0.85f),
         )
-        val step = 46.dp.toPx()
-        var x = -size.height
-        while (x < size.width) {
-            drawLine(
-                color = Color.White.copy(alpha = 0.025f),
-                start = Offset(x, size.height),
-                end = Offset(x + size.height, 0f),
-                strokeWidth = 1f,
-            )
-            x += step
-        }
     }
 }
 
-/** Nadpis s neonovým přechodem. */
-@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+/** Nadpis v technickém písmu Chakra Petch (osobnost nese písmo, ne efekty). */
 @Composable
 fun GradientTitle(text: String, fontSize: Int) {
     Text(
         text,
-        style = TextStyle(
-            brush = Brush.horizontalGradient(listOf(Color.White, NeonRed, NeonCyan)),
-            fontSize = fontSize.sp,
-            fontWeight = FontWeight.Black,
-            letterSpacing = 2.sp,
-        ),
+        color = Color.White,
+        fontFamily = Display,
+        fontWeight = FontWeight.Bold,
+        fontSize = fontSize.sp,
+        letterSpacing = 0.5.sp,
     )
 }
 
-/** Celoobrazovková animace boostu před spuštěním hry. */
+/** Celoobrazovková animace boostu před spuštěním hry – šestiúhelník, segmentový loading bar, kroky. */
 @Composable
 fun LaunchOverlay(ui: LaunchUi) {
     val transition = rememberInfiniteTransition(label = "launch")
-    val angle by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(1_300, easing = LinearEasing)),
-        label = "angle",
-    )
     val pulse by transition.animateFloat(
-        initialValue = 0.9f,
-        targetValue = 1.06f,
+        initialValue = 0.94f,
+        targetValue = 1.07f,
         animationSpec = infiniteRepeatable(tween(650), RepeatMode.Reverse),
         label = "pulse",
     )
@@ -122,120 +106,112 @@ fun LaunchOverlay(ui: LaunchUi) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.radialGradient(listOf(Color(0xFF2A0612), Bg), radius = 1400f))
+            .background(Brush.radialGradient(listOf(Color(0xFF2A0C26), Bg), radius = 1400f))
             .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 26.dp),
         ) {
-            Box(Modifier.size(190.dp), contentAlignment = Alignment.Center) {
+            // šestiúhelník s průběhem
+            Box(Modifier.size(width = 170.dp, height = 194.dp), contentAlignment = Alignment.Center) {
                 Canvas(Modifier.fillMaxSize()) {
-                    val stroke = 7.dp.toPx()
-                    val inset = stroke / 2
-                    val arcSize = Size(size.width - stroke, size.height - stroke)
-                    drawArc(
-                        color = Disabled,
-                        startAngle = 0f,
-                        sweepAngle = 360f,
-                        useCenter = false,
-                        topLeft = Offset(inset, inset),
-                        size = arcSize,
-                        style = Stroke(stroke),
-                    )
-                    drawArc(
-                        brush = Brush.sweepGradient(listOf(NeonRed, NeonCyan, NeonRed)),
-                        startAngle = -90f,
-                        sweepAngle = 360f * progress,
-                        useCenter = false,
-                        topLeft = Offset(inset, inset),
-                        size = arcSize,
-                        style = Stroke(stroke, cap = StrokeCap.Round),
-                    )
-                    val gap = 18.dp.toPx()
-                    rotate(angle) {
-                        drawArc(
-                            color = NeonCyan.copy(alpha = 0.85f),
-                            startAngle = 0f,
-                            sweepAngle = 50f,
-                            useCenter = false,
-                            topLeft = Offset(gap, gap),
-                            size = Size(size.width - 2 * gap, size.height - 2 * gap),
-                            style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round),
-                        )
-                        drawArc(
-                            color = NeonRed.copy(alpha = 0.85f),
-                            startAngle = 180f,
-                            sweepAngle = 50f,
-                            useCenter = false,
-                            topLeft = Offset(gap, gap),
-                            size = Size(size.width - 2 * gap, size.height - 2 * gap),
-                            style = Stroke(2.5.dp.toPx(), cap = StrokeCap.Round),
-                        )
+                    val stroke = 6.dp.toPx()
+                    val w = size.width
+                    val h = size.height
+                    val i = stroke
+                    val hex = Path().apply {
+                        moveTo(w / 2, i)
+                        lineTo(w - i, h * 0.25f)
+                        lineTo(w - i, h * 0.75f)
+                        lineTo(w / 2, h - i)
+                        lineTo(i, h * 0.75f)
+                        lineTo(i, h * 0.25f)
+                        close()
                     }
+                    drawPath(hex, Color.White.copy(alpha = 0.03f))
+                    drawPath(hex, Disabled, style = Stroke(stroke, join = StrokeJoin.Round))
+                    val pm = PathMeasure()
+                    pm.setPath(hex, true)
+                    val seg = Path()
+                    pm.getSegment(0f, pm.length * progress, seg, true)
+                    drawPath(
+                        seg,
+                        Brush.linearGradient(listOf(NeonRed, NeonCyan)),
+                        style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
                 }
                 val icon = ui.app?.icon
                 Box(
                     Modifier
-                        .size(96.dp)
+                        .size(92.dp)
                         .scale(pulse)
-                        .clip(RoundedCornerShape(28.dp))
+                        .clip(ChamferShape(16.dp))
                         .background(Color(0xFF1B1F2A)),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (icon != null) {
-                        Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(84.dp))
+                        Image(bitmap = icon, contentDescription = null, modifier = Modifier.size(82.dp))
                     } else {
                         Text("⚡", fontSize = 44.sp)
                     }
                 }
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
             Text(
-                if (ui.phase.isEmpty()) "BOOSTING  ${(progress * 100).toInt()} %" else ui.phase,
-                color = if (ui.phase.isEmpty()) NeonRed else NeonCyan,
-                fontWeight = FontWeight.Black,
-                fontSize = 14.sp,
-                letterSpacing = 4.sp,
+                if (ui.phase.isEmpty()) "${(progress * 100).toInt()} %" else ui.phase,
+                color = if (ui.phase.isEmpty()) NeonCyan else NeonGreen,
+                fontFamily = Display,
+                fontWeight = FontWeight.Bold,
+                fontSize = if (ui.phase.isEmpty()) 40.sp else 24.sp,
             )
             Text(
                 ui.label,
                 color = Color.White,
-                fontWeight = FontWeight.Black,
-                fontSize = 24.sp,
+                fontFamily = Display,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 20.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
             )
             Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                StatChip("RAM UVOLNĚNO", "+$freed MB", NeonGreen, Modifier.weight(1f))
-                StatChip("UKONČENO", "${ui.killed} appek", NeonRed, Modifier.weight(1f))
+            SegmentBar(progress, NeonCyan, Modifier.fillMaxWidth().height(10.dp), segments = 20)
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f)) {
+                    Text("RAM freed", color = TextDim, fontSize = 12.sp)
+                    Text("+$freed MB", color = NeonGreen, fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                    Text("Closed", color = TextDim, fontSize = 12.sp)
+                    Text("${ui.killed} apps", color = NeonRed, fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                }
             }
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
             Column(Modifier.fillMaxWidth()) {
                 ui.steps.forEach { st ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(vertical = 3.dp),
                     ) {
-                        Box(Modifier.width(22.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.width(20.dp), contentAlignment = Alignment.Center) {
                             when (st.state) {
-                                2 -> Text("✓", color = NeonGreen, fontWeight = FontWeight.Black, fontSize = 15.sp)
+                                2 -> Diamond(NeonGreen, 8.dp)
                                 1 -> CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
+                                    modifier = Modifier.size(13.dp),
                                     strokeWidth = 2.dp,
                                     color = NeonCyan,
                                 )
-                                else -> Text("•", color = Disabled, fontSize = 15.sp)
+                                else -> Diamond(Disabled, 8.dp)
                             }
                         }
                         Spacer(Modifier.width(10.dp))
                         Text(
                             st.title,
                             fontSize = 14.sp,
-                            fontWeight = if (st.state == 1) FontWeight.Bold else FontWeight.Normal,
+                            fontWeight = if (st.state == 1) FontWeight.SemiBold else FontWeight.Normal,
                             color = when (st.state) {
                                 2 -> Color.White
                                 1 -> NeonCyan

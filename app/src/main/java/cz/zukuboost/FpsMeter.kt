@@ -43,7 +43,9 @@ class FpsMeter(private val pkg: String) {
             misses = 0
         } else {
             misses++
-            if (misses % 3 == 0) layer = null // vrstva se mohla změnit (načítání, nová scéna)
+            // Vrstvu hledáme znovu až po delší době – výpis všech vrstev (--list) je pro SurfaceFlinger náročnější
+            // a statická scéna (pauza, menu) má legitimně 0 nových snímků
+            if (misses % 10 == 0) layer = null
             if (misses >= 6 && !latencyWorked) useTimestats = true
         }
         return fps

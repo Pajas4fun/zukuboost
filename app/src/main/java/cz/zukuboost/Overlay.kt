@@ -47,6 +47,10 @@ class OverlayController(private val ctx: Context) {
         val tv = TextView(ctx).apply {
             setTextColor(Color.WHITE)
             textSize = 10.5f
+            // Pevná minimální šířka a počet řádků: okno nemění velikost při každé změně čísel
+            // (změna velikosti okna = přepočet rozvržení v systému a může cuknout snímek)
+            minWidth = (ctx.resources.displayMetrics.density * 214).toInt()
+            minLines = 5
             typeface = Typeface.MONOSPACE
             setPadding(20, 12, 20, 12)
             background = GradientDrawable().apply {
@@ -81,7 +85,8 @@ class OverlayController(private val ctx: Context) {
     }
 
     fun update(text: String) {
-        view?.text = text
+        val v = view ?: return
+        if (v.text.toString() != text) v.text = text
     }
 
     fun hide() {
@@ -107,7 +112,7 @@ class TouchLockController(private val ctx: Context, private val onUnlocked: () -
     fun lock() {
         if (root != null) return
         val label = TextView(ctx).apply {
-            text = "🔒 Dotyk zamčený – podrž 1,5 s pro odemčení"
+            text = "🔒 Touch locked – hold 1.5 s to unlock"
             setTextColor(Color.WHITE)
             textSize = 13f
             setPadding(40, 24, 40, 24)
@@ -186,7 +191,12 @@ class EdgeBlockController(private val ctx: Context) {
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT,
-            ).apply { gravity = side or Gravity.TOP }
+            ).apply {
+                gravity = side or Gravity.TOP
+                // Neviditelné okno se neskládá do obrazu (nebere hardwarovou vrstvu displeje = žádná zátěž GPU),
+                // dotyky ale dál zachytí
+                alpha = 0f
+            }
             runCatching { wm.addView(v, params) }.onSuccess { views += v }
         }
     }
@@ -289,7 +299,9 @@ class Stats(private val ctx: Context) {
         val out = runCatching {
             Shell.exec(
                 "dumpsys thermalservice; echo '@@STAT'; head -1 /proc/stat 2>/dev/null; " +
-                    "echo '@@GPU'; cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage 2>/dev/null; " +
+                    // GPU: Adreno (Snapdragon), MediaTek GED, Mali – co systém dovolí číst
+                    "echo '@@GPU'; cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage 2>/dev/null || " +
+                    "cat /sys/kernel/ged/hal/gpu_utilization 2>/dev/null || cat /sys/class/misc/mali0/device/utilization 2>/dev/null; " +
                     "echo '@@CUR'; cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null; " +
                     "echo '@@MAX'; cat /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq 2>/dev/null; echo '@@END'"
             )
@@ -333,7 +345,7 @@ class Stats(private val ctx: Context) {
     }
 
     suspend fun format(fps: Int?, session: SessionStats, elapsedMs: Long): String {
-        if (tick++ % 3 == 0) readSensors()
+        if (tick++ % 4 == 0) readSensors()
         val battery = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val batTemp = (battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
         lastBatTemp = batTemp
@@ -387,12 +399,12 @@ class Stats(private val ctx: Context) {
 
     private fun thermalLabel(s: Int) = when (s) {
         0 -> "OK"
-        1 -> "teplý"
+        1 -> "warm"
         2 -> "throttling"
-        3 -> "silný throttling"
-        4 -> "kritické"
-        5 -> "nouzové"
-        6 -> "vypínání"
+        3 -> "heavy throttling"
+        4 -> "critical"
+        5 -> "emergency"
+        6 -> "shutdown"
         else -> ""
     }
 }

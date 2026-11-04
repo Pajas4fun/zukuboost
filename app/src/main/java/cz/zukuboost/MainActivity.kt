@@ -113,13 +113,19 @@ fun loadApps(ctx: Context): List<AppItem> {
             AppItem(
                 label = ai.loadLabel(pm).toString(),
                 pkg = ai.packageName,
-                icon = runCatching { ai.loadIcon(pm).toBitmap(128, 128).asImageBitmap() }.getOrNull(),
+                // Seznam všech appek: malé ikony (šetří paměť); ostré ikony her se načítají zvlášť
+                icon = runCatching { ai.loadIcon(pm).toBitmap(96, 96).asImageBitmap() }.getOrNull(),
                 isGame = ai.category == ApplicationInfo.CATEGORY_GAME ||
                     (ai.flags and ApplicationInfo.FLAG_IS_GAME) != 0,
             )
         }
         .sortedWith(compareByDescending<AppItem> { it.isGame }.thenBy { it.label.lowercase() })
 }
+
+/** Ostrá ikona jedné appky (pro banner, knihovnu her a animaci spuštění). */
+fun loadHiResIcon(ctx: Context, pkg: String, px: Int = 256): ImageBitmap? = runCatching {
+    ctx.packageManager.getApplicationIcon(pkg).toBitmap(px, px).asImageBitmap()
+}.getOrNull()
 
 fun hasUsageAccess(ctx: Context): Boolean {
     val aom = ctx.getSystemService(AppOpsManager::class.java)
@@ -200,6 +206,8 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
 
     var games by mutableStateOf(prefs.games)
     var killList by mutableStateOf(prefs.killList)
+    var killMode by mutableIntStateOf(prefs.killMode)
+    var keepList by mutableStateOf(prefs.keepList)
     var monitorOn by mutableStateOf(GameMonitorService.running)
     var busy by mutableStateOf<String?>(null)
     var recheck by mutableIntStateOf(0)
@@ -214,9 +222,24 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     var selected by mutableStateOf(prefs.lastGame)
     var historyTick by mutableIntStateOf(0)
     var launch by mutableStateOf<LaunchUi?>(null)
+    var device by mutableStateOf<DeviceProfile?>(null)
     var obstacles by mutableStateOf<List<BoostEngine.Obstacle>?>(null)
 
     val scales = mutableStateMapOf<String, Float>()
+    val hiResIcons = mutableStateMapOf<String, ImageBitmap>()
+
+    /** Ostrá ikona z cache (načte se na pozadí při prvním použití). */
+    private val iconLoading = mutableSetOf<String>()
+
+    fun hiRes(app: AppItem): ImageBitmap? {
+        hiResIcons[app.pkg]?.let { return it }
+        if (!iconLoading.add(app.pkg)) return app.icon // už se načítá
+        scope.launch {
+            val bmp = withContext(Dispatchers.IO) { loadHiResIcon(ctx, app.pkg) }
+            if (bmp != null) hiResIcons[app.pkg] = bmp
+        }
+        return app.icon
+    }
     val caps = mutableStateMapOf<String, Int>()
     val opts = mutableStateMapOf<Opt, Boolean>().apply { Opt.entries.forEach { put(it, prefs.opt(it)) } }
 
@@ -241,16 +264,16 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
             val result = runCatching { block() }
             busy = null
             recheck++
-            toast(result.fold({ it.ifBlank { "Hotovo" }.take(180) }, { "Chyba: ${it.message}" }))
+            toast(result.fold({ it.ifBlank { "Done" }.take(180) }, { "Error: ${it.message}" }))
         }
     }
 
     /** Ověří přes dumpsys, co systém z boostu opravdu používá. */
     fun runDiagnostics() {
         if (busy != null) return
-        busy = "Ověřuji, co systém používá…"
+        busy = "Checking what the system actually uses…"
         scope.launch {
-            diagText = runCatching { BoostEngine.diagnose(ctx, selected) }.getOrElse { "Chyba: ${it.message}" }
+            diagText = runCatching { BoostEngine.diagnose(ctx, selected) }.getOrElse { "Error: ${it.message}" }
             busy = null
         }
     }
@@ -259,6 +282,39 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
         games = v
         prefs.games = v
         if (killList.any { it in v }) updateKill(killList - v)
+    }
+
+    /** Nastaví boost podle profilu telefonu. Vrací krátké shrnutí. */
+    fun applyDeviceRecommendation(d: DeviceProfile): String {
+        val rec = DeviceDetector.recommend(d)
+        rec.opts.forEach { (o, v) ->
+            opts[o] = v
+            prefs.setOpt(o, v)
+        }
+        prefs.coolStartC = rec.coolStartC
+        setKillMode(rec.killMode)
+        if (rec.killMode == 1) ensureDefaultKeep()
+        prefs.deviceApplied = true
+        recheck++
+        return "Tuned for ${d.model} (${d.socVendor.title}, ${d.ramGb} GB RAM, ${d.maxHz} Hz)"
+    }
+
+    fun updateKeep(v: Set<String>) {
+        keepList = v
+        prefs.keepList = v
+    }
+
+    fun setKillMode(mode: Int) {
+        killMode = mode
+        prefs.killMode = mode
+    }
+
+    /** Při prvním použití režimu „vše kromě výjimek“ předvyplní doporučené výjimky (zprávy, hudba, hodinky). */
+    fun ensureDefaultKeep() {
+        if (prefs.keepInitDone) return
+        val installed = BoostEngine.DEFAULT_KEEP.filter { runCatching { ctx.packageManager.getApplicationInfo(it, 0) }.isSuccess }
+        updateKeep(keepList + installed)
+        prefs.keepInitDone = true
     }
 
     fun updateKill(v: Set<String>) {
@@ -291,11 +347,12 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
         if (busy != null || launch != null) return
         val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
         if (intent == null) {
-            toast("Hru nejde spustit")
+            toast("Can't launch the game")
             return
         }
         prefs.lastGame = pkg
-        val ui = LaunchUi(apps?.firstOrNull { it.pkg == pkg }, labelOf(pkg))
+        val base = apps?.firstOrNull { it.pkg == pkg }
+        val ui = LaunchUi(base?.let { it.copy(icon = hiResIcons[pkg] ?: it.icon) }, labelOf(pkg))
         launch = ui
         scope.launch {
           try {
@@ -304,13 +361,13 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
             val usageOk = hasUsageAccess(ctx)
             val ready = shizukuOk && usageOk
             val titles = when {
-                ready -> BoostEngine.launchSteps(ctx, pkg) + "Hra připravena"
-                !shizukuOk -> listOf("Shizuku neběží – spouštím bez boostu")
-                else -> listOf("Chybí přístup k využití – spouštím bez boostu")
+                ready -> listOf("Analyzing what runs in the background") + BoostEngine.launchSteps(ctx, pkg) + "Game ready"
+                !shizukuOk -> listOf("Shizuku isn't running – launching without boost")
+                else -> listOf("Usage access missing – launching without boost")
             }
             ui.steps = titles.map { LaunchStep(it, 0) }
             val before = freeRamMb(ctx)
-            ui.killed = (prefs.killList - pkg).count {
+            ui.killed = if (prefs.killMode == 1) 0 else (prefs.killList - pkg).count {
                 runCatching { ctx.packageManager.getApplicationInfo(it, 0) }.isSuccess
             }
 
@@ -322,25 +379,49 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
 
             titles.indices.forEach { i ->
                 ui.steps = ui.steps.mapIndexed { j, st -> if (j == i) st.copy(state = 1) else st }
-                // Poslední krok čeká, až je boost opravdu hotový
-                if (i == titles.lastIndex) work.await() else delay(if (i == 0) 450L else 260L)
+                if (ready && i == 0) {
+                    // Analýza: co běží, co se ukončí a kolik to bere paměti → přepíše texty kroků
+                    runCatching { BoostEngine.killTargets(ctx, pkg) }
+                    val a = BoostEngine.lastAnalysis
+                    if (a != null) {
+                        val mb = a.killedMb
+                        val size = if (mb >= 1024) String.format(java.util.Locale.US, "%.1f GB", mb / 1024f) else "$mb MB"
+                        val names = a.killed.take(3).joinToString(", ") { BoostEngine.appLabel(ctx, it.first) }
+                        ui.steps = ui.steps.mapIndexed { j, st ->
+                            when {
+                                j == 0 -> st.copy(title = "${a.running} apps in the background, $size to free")
+                                st.title.startsWith("Closing") && a.killed.isNotEmpty() ->
+                                    st.copy(title = "Closing ${a.killed.size}: $names" + if (a.killed.size > 3) "…" else "")
+                                st.title.startsWith("Closing") -> st.copy(title = "Nothing unnecessary is running in the background")
+                                else -> st
+                            }
+                        }
+                        ui.killed = a.killed.size
+                    }
+                    delay(350)
+                } else if (i == titles.lastIndex) {
+                    work.await() // poslední krok čeká, až je boost opravdu hotový
+                } else {
+                    delay(260L)
+                }
                 ui.steps = ui.steps.mapIndexed { j, st -> if (j == i) st.copy(state = 2) else st }
                 ui.progress = (i + 1f) / titles.size
                 ui.freedMb = max(0L, freeRamMb(ctx) - before).toInt()
             }
             val result = work.await()
+            if (prefs.killMode == 1 && prefs.opt(Opt.KILL_BG)) ui.killed = BoostEngine.lastKilled
             ui.freedMb = max(0L, freeRamMb(ctx) - before).toInt()
 
             // Auto boost hlídá hru a po jejím konci vše vrátí
             var note = ""
-            if (result?.isFailure == true) note = "Boost se nepodařil: ${result.exceptionOrNull()?.message}"
+            if (result?.isFailure == true) note = "Boost failed: ${result.exceptionOrNull()?.message}"
             if (ready && !GameMonitorService.running) startMonitor()
-            if (shizukuOk && !usageOk) note = "Zapni přístup k využití v Nastavení → Oprávnění"
-            ui.phase = "SPOUŠTÍM HRU"
+            if (shizukuOk && !usageOk) note = "Enable usage access in Settings → Permissions"
+            ui.phase = "Launching game"
             delay(550)
             val started = runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.isSuccess
             delay(700)
-            if (!started) note = "Hru se nepodařilo spustit"
+            if (!started) note = "Couldn't launch the game"
             if (note.isNotEmpty()) toast(note)
           } finally {
             launch = null // animace nesmí zůstat viset ani při chybě
@@ -352,11 +433,11 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
 // ---------- Hlavní obrazovka s navigací ----------
 
 private val TABS = listOf(
-    "🏠" to "Domů",
-    "🎮" to "Hry",
-    "🧹" to "Kill list",
-    "📊" to "Historie",
-    "⚙️" to "Nastavení",
+    "🏠" to "Home",
+    "🎮" to "Games",
+    "🧹" to "Closing",
+    "📊" to "History",
+    "⚙️" to "Settings",
 )
 
 @Composable
@@ -368,6 +449,7 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
+        s.ensureDefaultKeep()
         s.apps = withContext(Dispatchers.IO) { loadApps(ctx) }
     }
 
@@ -391,6 +473,11 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
             }
             s.gpuTuner = runCatching { BoostEngine.gpuTunerEnabled() }.getOrDefault(false)
             s.obstacles = runCatching { BoostEngine.findObstacles() }.getOrNull()
+            if (s.device == null) {
+                s.device = runCatching { withContext(Dispatchers.IO) { DeviceDetector.detect(ctx) } }.getOrNull()
+                val d = s.device
+                if (d != null && !s.prefs.deviceApplied) s.toast(s.applyDeviceRecommendation(d))
+            }
             runCatching { BoostEngine.detectDisplayRates(ctx) }.getOrNull()?.maxOrNull()?.let { s.maxHz = it.roundToInt() }
             runCatching { BoostEngine.ensureFreezer(ctx) }
             s.freezer = runCatching { BoostEngine.freezerState() }.getOrNull()

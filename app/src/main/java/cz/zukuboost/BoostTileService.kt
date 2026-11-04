@@ -37,9 +37,9 @@ class BoostTileService : TileService() {
         tile.label = "ZukuBoost"
         if (Build.VERSION.SDK_INT >= 29) {
             tile.subtitle = when {
-                on -> "Zapnuto"
-                running -> "Pozastaveno"
-                else -> "Vypnuto"
+                on -> "On"
+                running -> "Paused"
+                else -> "Off"
             }
         }
         tile.updateTile()

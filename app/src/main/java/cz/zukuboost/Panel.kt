@@ -64,12 +64,12 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
     }
 
     private companion object {
-        val RED = 0xFFFF2D55.toInt()
-        val CYAN = 0xFF00E5FF.toInt()
-        val GREEN = 0xFF00E676.toInt()
-        val YELLOW = 0xFFFFC400.toInt()
-        val PURPLE = 0xFF9D4DFF.toInt()
-        val DIM = 0xFF8A90A2.toInt()
+        val RED = 0xFFFF3D6E.toInt()
+        val CYAN = 0xFF38E8FF.toInt()
+        val GREEN = 0xFFC6FF3D.toInt()
+        val YELLOW = 0xFFFFC94D.toInt()
+        val PURPLE = 0xFF8B6CFF.toInt()
+        val DIM = 0xFF8C90A8.toInt()
     }
 
     private val wm = ctx.getSystemService(WindowManager::class.java)
@@ -82,6 +82,12 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
 
     private fun dp(v: Int) = (v * density).toInt()
     private fun dpf(v: Float) = v * density
+
+    // Stejné technické písmo jako v appce
+    private val displayBold: Typeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.chakra_bold) }
+        .getOrNull() ?: Typeface.DEFAULT_BOLD
+    private val displaySemi: Typeface = runCatching { androidx.core.content.res.ResourcesCompat.getFont(ctx, R.font.chakra_semibold) }
+        .getOrNull() ?: Typeface.DEFAULT_BOLD
 
     // ================= Úchyt =================
 
@@ -101,8 +107,8 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
     fun show() {
         if (handle != null) return
         val pill = View(ctx).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(RED, PURPLE, CYAN)).apply {
-                cornerRadius = dpf(4f)
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(RED, RED, PURPLE)).apply {
+                cornerRadius = dpf(1.5f)
             }
             elevation = dpf(6f)
             if (Build.VERSION.SDK_INT >= 28) {
@@ -143,6 +149,8 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
         }
         runCatching { wm.addView(root, handleParams) }.onSuccess { handle = root }
     }
+
+    val isOpen: Boolean get() = panel != null
 
     fun hide() {
         removePanelNow()
@@ -192,38 +200,85 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
 
     // ================= Vlastní kreslené prvky =================
 
-    /** Rotující neonový rámeček (SweepGradient) + HUD rohové značky. */
-    private inner class NeonBorder : View(ctx) {
-        var angle = 0f
+    /** Zkosený tvar (vlevo nahoře a vpravo dole) – stejný jako v appce. */
+    private fun chamferPath(w: Float, h: Float, cut: Float) = Path().apply {
+        moveTo(cut, 0f)
+        lineTo(w, 0f)
+        lineTo(w, h - cut)
+        lineTo(w - cut, h)
+        lineTo(0f, h)
+        lineTo(0f, cut)
+        close()
+    }
+
+    /** Pozadí se zkosenými rohy, volitelně obrys, pruh vlevo a pruh dole. */
+    private inner class ChamferDrawable(
+        private val fillTop: Int,
+        private val fillBottom: Int,
+        private val cut: Float,
+        private val strokeColor: Int = 0,
+        private val leftBar: Int = 0,
+        private val bottomBar: Int = 0,
+    ) : android.graphics.drawable.Drawable() {
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = dpf(1.6f)
+            strokeWidth = dpf(1f)
         }
+        private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        override fun draw(c: Canvas) {
+            val w = bounds.width().toFloat()
+            val h = bounds.height().toFloat()
+            val path = chamferPath(w, h, cut)
+            c.save()
+            c.translate(bounds.left.toFloat(), bounds.top.toFloat())
+            fill.shader = LinearGradient(0f, 0f, 0f, h, fillTop, fillBottom, Shader.TileMode.CLAMP)
+            c.drawPath(path, fill)
+            if (strokeColor != 0) {
+                stroke.color = strokeColor
+                c.drawPath(path, stroke)
+            }
+            if (leftBar != 0 || bottomBar != 0) {
+                c.clipPath(path)
+                if (leftBar != 0) {
+                    bar.color = leftBar
+                    c.drawRect(0f, 0f, dpf(3f), h, bar)
+                }
+                if (bottomBar != 0) {
+                    bar.color = bottomBar
+                    c.drawRect(0f, h - dpf(2f), w, h, bar)
+                }
+            }
+            c.restore()
+        }
+
+        override fun setAlpha(alpha: Int) {}
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {}
+
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
+    }
+
+    /** HUD rohové značky (statické – nepřekreslují se, nezatěžují hru). */
+    private inner class HudCorners : View(ctx) {
         private val corner = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = dpf(2.4f)
+            strokeWidth = dpf(2f)
             color = CYAN
-            strokeCap = Paint.Cap.ROUND
         }
-        private val m = Matrix()
-        private val rect = RectF()
 
         override fun onDraw(c: Canvas) {
-            val inset = dpf(1f)
-            rect.set(inset, inset, width - inset, height - inset)
-            val shader = SweepGradient(width / 2f, height / 2f, intArrayOf(RED, PURPLE, CYAN, 0x3300E5FF, RED), null)
-            m.setRotate(angle, width / 2f, height / 2f)
-            shader.setLocalMatrix(m)
-            stroke.shader = shader
-            val r = dpf(26f)
-            c.drawRoundRect(rect, r, r, stroke)
-            // HUD značky v rozích
             val l = dpf(14f)
-            val o = dpf(9f)
-            c.drawLine(o, o + l, o, o + dpf(4f), corner)
-            c.drawLine(o + dpf(4f), o, o + l, o, corner)
-            c.drawLine(width - o, height - o - l, width - o, height - o - dpf(4f), corner)
-            c.drawLine(width - o - dpf(4f), height - o, width - o - l, height - o, corner)
+            val o = dpf(8f)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            c.drawLine(o + dpf(10f), o, o + dpf(10f) + l, o, corner)
+            c.drawLine(w - o, o, w - o - l, o, corner)
+            c.drawLine(w - o, o, w - o, o + l, corner)
+            c.drawLine(o, h - o, o + l, h - o, corner)
+            c.drawLine(o, h - o, o, h - o - l, corner)
+            c.drawLine(w - o - dpf(10f) - l, h - o, w - o - dpf(10f), h - o, corner)
         }
     }
 
@@ -275,24 +330,39 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
         }
     }
 
-    /** Tepelný pruh: barva podle pozice (zelená → žlutá → červená). */
+    /** Segmentová lišta jako HP ve hře; barva podle teploty (zelená → žlutá → červená). */
     private inner class HeatBar : View(ctx) {
         var fraction = 0f
             set(v) {
                 field = v.coerceIn(0f, 1f)
                 invalidate()
             }
-        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x1FFFFFFF }
-        private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val rect = RectF()
+        private val off = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x1FFFFFFF }
+        private val on = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val seg = Path()
 
         override fun onDraw(c: Canvas) {
-            val r = height / 2f
-            rect.set(0f, 0f, width.toFloat(), height.toFloat())
-            c.drawRoundRect(rect, r, r, track)
-            bar.shader = LinearGradient(0f, 0f, width.toFloat(), 0f, intArrayOf(GREEN, YELLOW, RED), null, Shader.TileMode.CLAMP)
-            rect.set(0f, 0f, max(width * fraction, height.toFloat()), height.toFloat())
-            c.drawRoundRect(rect, r, r, bar)
+            val n = 12
+            val gap = dpf(2f)
+            val w = (width - gap * (n - 1)) / n
+            val h = height.toFloat()
+            val k = h * 0.4f
+            val lit = (fraction * n).toInt().coerceAtLeast(if (fraction > 0f) 1 else 0)
+            on.color = when {
+                fraction > 0.75f -> RED
+                fraction > 0.5f -> YELLOW
+                else -> GREEN
+            }
+            for (i in 0 until n) {
+                val x = i * (w + gap)
+                seg.reset()
+                seg.moveTo(x + k, 0f)
+                seg.lineTo(x + w, 0f)
+                seg.lineTo(x + w - k, h)
+                seg.lineTo(x, h)
+                seg.close()
+                c.drawPath(seg, if (i < lit) on else off)
+            }
         }
     }
 
@@ -302,7 +372,7 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
             setTextColor(color)
             textSize = size
             letterSpacing = spacing
-            typeface = if (bold) Typeface.create(Typeface.DEFAULT, Typeface.BOLD) else Typeface.DEFAULT
+            typeface = if (bold) displaySemi else Typeface.DEFAULT
         }
 
     // ================= Panel =================
@@ -324,14 +394,11 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
         }
         val titles = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         titles.addView(
-            label("ZUKUBOOST", Color.WHITE, 15f, bold = true, spacing = 0.2f).apply {
-                val w = paint.measureText(text.toString())
-                paint.shader = LinearGradient(0f, 0f, w, 0f, intArrayOf(Color.WHITE, RED, CYAN), null, Shader.TileMode.CLAMP)
-            },
+            label("ZukuBoost", Color.WHITE, 17f, bold = true).apply { typeface = displayBold },
         )
-        titles.addView(label(listener.gameName().uppercase(), DIM, 10f, spacing = 0.12f).apply { maxLines = 1 })
+        titles.addView(label(listener.gameName(), DIM, 11f).apply { maxLines = 1 })
         header.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        val live = label("● LIVE", RED, 9f, bold = true, spacing = 0.12f).apply {
+        val live = label("● Live", RED, 10f, bold = true).apply {
             setPadding(dp(8), dp(3), dp(8), dp(3))
             background = GradientDrawable().apply {
                 cornerRadius = dpf(20f)
@@ -358,15 +425,15 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.BOTTOM
             setPadding(dp(12), dp(10), dp(12), dp(10))
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x2200E5FF, 0x0800E5FF)).apply {
-                cornerRadius = dpf(18f)
-                setStroke(dp(1), 0x3300E5FF)
-            }
+            background = ChamferDrawable(0x2238E8FF, 0x0838E8FF, dpf(12f), strokeColor = 0x3338E8FF)
         }
         val fpsCol = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
-        val fpsNum = label("--", CYAN, 34f, bold = true).apply { includeFontPadding = false }
+        val fpsNum = label("--", CYAN, 38f, bold = true).apply {
+            includeFontPadding = false
+            typeface = displayBold
+        }
         fpsCol.addView(fpsNum)
-        fpsCol.addView(label("FPS", DIM, 9f, bold = true, spacing = 0.2f))
+        fpsCol.addView(label("FPS", DIM, 11f, bold = true))
         fpsBlock.addView(fpsCol, LinearLayout.LayoutParams(dp(78), LinearLayout.LayoutParams.WRAP_CONTENT))
         val spark = Spark()
         fpsBlock.addView(spark, LinearLayout.LayoutParams(0, dp(46), 1f))
@@ -381,16 +448,19 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(7), 0, 0)
             }
-            row.addView(label(name, DIM, 9.5f, bold = true, spacing = 0.12f), LinearLayout.LayoutParams(dp(54), LinearLayout.LayoutParams.WRAP_CONTENT))
+            row.addView(label(name, DIM, 11f), LinearLayout.LayoutParams(dp(58), LinearLayout.LayoutParams.WRAP_CONTENT))
             val bar = HeatBar()
-            row.addView(bar, LinearLayout.LayoutParams(0, dp(7), 1f))
-            val value = label("--", Color.WHITE, 11f, bold = true).apply { gravity = Gravity.END }
+            row.addView(bar, LinearLayout.LayoutParams(0, dp(8), 1f))
+            val value = label("--", Color.WHITE, 13f, bold = true).apply {
+                gravity = Gravity.END
+                typeface = displayBold
+            }
             row.addView(value, LinearLayout.LayoutParams(dp(40), LinearLayout.LayoutParams.WRAP_CONTENT))
             content.addView(row)
             return value to bar
         }
         val (cpuText, cpuBar) = heatRow("CPU")
-        val (batText, batBar) = heatRow("BATERIE")
+        val (batText, batBar) = heatRow("Battery")
 
         // ---- oddělovač ----
         content.addView(
@@ -403,12 +473,12 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
         // ---- akce ----
         val rec = listener.isRecording()
         val actions = listOf(
-            Action("📸", "Snímek", false, RED, true) { listener.onScreenshot() },
-            Action(if (rec) "⏹" else "⏺", if (rec) "Stop" else "Nahrát", rec, RED, true) { listener.onRecord() },
-            Action("🔒", "Zámek", false, PURPLE, true) { listener.onTouchLock() },
+            Action("📸", "Screenshot", false, RED, true) { listener.onScreenshot() },
+            Action(if (rec) "⏹" else "⏺", if (rec) "Stop" else "Record", rec, RED, true) { listener.onRecord() },
+            Action("🔒", "Lock", false, PURPLE, true) { listener.onTouchLock() },
             Action("📊", "Overlay", listener.isOverlayOn(), CYAN, false) { listener.onToggleOverlay() },
-            Action("🖐", "Okraje", listener.isEdgesOn(), CYAN, false) { listener.onToggleEdges() },
-            Action("🧹", "Vyčistit", false, GREEN, true) { listener.onCleanRam() },
+            Action("🖐", "Edges", listener.isEdgesOn(), CYAN, false) { listener.onToggleEdges() },
+            Action("🧹", "Clean", false, GREEN, true) { listener.onCleanRam() },
         )
         val actionViews = mutableListOf<View>()
         actions.chunked(3).forEach { chunk ->
@@ -416,16 +486,27 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
             chunk.forEach { a ->
                 val v = actionView(a)
                 actionViews += v
-                row.addView(v, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { bottomMargin = dp(8) })
+                row.addView(
+                    v,
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        setMargins(dp(3), 0, dp(3), dp(6))
+                    },
+                )
             }
             content.addView(row)
         }
 
-        // ---- kořen: sklo + obsah + rotující rámeček ----
-        val border = NeonBorder()
+        // ---- kořen: zkosený panel, plazmový pruh vlevo, HUD rohy ----
+        val border = HudCorners()
+        val cut = dpf(18f)
         val root = FrameLayout(ctx).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xF5171B27.toInt(), 0xF5090B10.toInt())).apply {
-                cornerRadius = dpf(26f)
+            background = ChamferDrawable(0xF7131520.toInt(), 0xF7090A10.toInt(), cut, strokeColor = 0x14FFFFFF, leftBar = RED)
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                @Suppress("DEPRECATION")
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    val path = chamferPath(view.width.toFloat(), view.height.toFloat(), cut)
+                    if (Build.VERSION.SDK_INT >= 30) outline.setPath(path) else outline.setConvexPath(path)
+                }
             }
             elevation = dpf(14f)
             if (Build.VERSION.SDK_INT >= 28) {
@@ -453,9 +534,9 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
             )
             spark.data = d.history
             statLine.text = if (d.measuring) {
-                "ø ${d.avg ?: "--"}   ·   min ${d.min ?: "--"}   ·   ⚠ propady ${d.drops}"
+                "ø ${d.avg ?: "--"}   ·   min ${d.min ?: "--"}   ·   ⚠ drops ${d.drops}"
             } else {
-                "Zapni 📊 Overlay pro živé FPS"
+                "Turn on 📊 Overlay for live FPS"
             }
             val cpu = d.cpu
             cpuText.text = cpu?.let { "${it.toInt()}°" } ?: "--"
@@ -497,17 +578,6 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
         runCatching { wm.addView(root, params) }.onSuccess {
             panel = root
             handler.postDelayed(tick, 1_000)
-            borderAnim = ValueAnimator.ofFloat(0f, 360f).apply {
-                duration = 4_000
-                // 2,5 otáčky a dost – nekonečné překreslování by bralo GPU hře, když necháš panel otevřený
-                repeatCount = 2
-                interpolator = LinearInterpolator()
-                addUpdateListener {
-                    border.angle = it.animatedValue as Float
-                    border.invalidate()
-                }
-                start()
-            }
             if (animate) {
                 root.animate().alpha(1f).translationX(0f).setDuration(280).setInterpolator(OvershootInterpolator(0.7f)).start()
                 actionViews.forEachIndexed { i, v ->
@@ -530,43 +600,30 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
     private fun actionView(a: Action): View {
         val circle = TextView(ctx).apply {
             text = a.icon
-            textSize = 19f
+            textSize = 18f
             gravity = Gravity.CENTER
-            background = if (a.active) {
-                GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(a.accent, (a.accent and 0x00FFFFFF) or 0x55000000)).apply {
-                    shape = GradientDrawable.OVAL
-                    setStroke(dp(2), Color.WHITE)
-                }
-            } else {
-                GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor((a.accent and 0x00FFFFFF) or 0x24000000)
-                    setStroke(dp(1), (a.accent and 0x00FFFFFF) or 0x77000000)
-                }
-            }
-            elevation = if (a.active) dpf(10f) else 0f
-            if (Build.VERSION.SDK_INT >= 28) {
-                outlineSpotShadowColor = a.accent
-                outlineAmbientShadowColor = a.accent
-            }
         }
-        val text = label(a.label, if (a.active) a.accent else 0xFFCFD3DC.toInt(), 10f, bold = a.active).apply {
+        val text = label(a.label, if (a.active) a.accent else 0xFFCFD3DC.toInt(), 10.5f, bold = a.active).apply {
             gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, 0)
+            setPadding(0, dp(3), 0, 0)
         }
         val box = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            clipChildren = false
-            setPadding(0, dp(4), 0, dp(2))
-            addView(circle, LinearLayout.LayoutParams(dp(50), dp(50)))
+            setPadding(0, dp(8), 0, dp(8))
+            background = if (a.active) {
+                ChamferDrawable((a.accent and 0x00FFFFFF) or 0x33000000, (a.accent and 0x00FFFFFF) or 0x14000000, dpf(9f), bottomBar = a.accent)
+            } else {
+                ChamferDrawable(0x12FFFFFF, 0x08FFFFFF, dpf(9f), strokeColor = (a.accent and 0x00FFFFFF) or 0x44000000)
+            }
+            addView(circle, LinearLayout.LayoutParams(dp(34), dp(28)))
             addView(text)
         }
         box.setOnTouchListener { v, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> circle.animate().scaleX(0.88f).scaleY(0.88f).setDuration(90).start()
+                MotionEvent.ACTION_DOWN -> v.animate().scaleX(0.93f).scaleY(0.93f).setDuration(90).start()
                 MotionEvent.ACTION_UP -> {
-                    circle.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
                     val inside = e.x >= 0 && e.y >= 0 && e.x <= v.width && e.y <= v.height
                     if (inside) {
                         if (a.closeAfter) closePanel()
@@ -574,7 +631,7 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
                         if (!a.closeAfter) refresh()
                     }
                 }
-                MotionEvent.ACTION_CANCEL -> circle.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+                MotionEvent.ACTION_CANCEL -> v.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
             }
             true
         }

@@ -51,23 +51,158 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.material3.Typography
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
+import kotlin.math.roundToInt
 
 // ---------- Barvy ----------
 
-val NeonRed = Color(0xFFFF2D55)
-val NeonCyan = Color(0xFF00E5FF)
-val NeonYellow = Color(0xFFFFC400)
-val NeonGreen = Color(0xFF00E676)
-val NeonPurple = Color(0xFF9D4DFF)
-val Bg = Color(0xFF06070B)
-val CardBg = Color(0xFF10131B)
-val CardBgHi = Color(0xFF161A25)
-val TextDim = Color(0xFF8A90A2)
-val Disabled = Color(0xFF262A35)
+// Paleta „esports broadcast“: hluboká indigová tma, plazmová růžová pro akci, iontová modrá pro živá data,
+// limetková pro „připraveno“. Názvy proměnných zůstávají kvůli zbytku kódu.
+val NeonRed = Color(0xFFFF3D6E) // Plasma
+val NeonCyan = Color(0xFF38E8FF) // Ion
+val NeonYellow = Color(0xFFFFC94D) // Amber
+val NeonGreen = Color(0xFFC6FF3D) // Volt
+val NeonPurple = Color(0xFF8B6CFF) // Violet
+val Bg = Color(0xFF07080F) // Void
+val CardBg = Color(0xFF11131D) // Graphite
+val CardBgHi = Color(0xFF151826)
+val TextDim = Color(0xFF8C90A8) // Haze
+val Disabled = Color(0xFF232634)
+
+/** Chakra Petch – hranaté technické písmo pro nadpisy, čísla a tlačítka. Tělo textu zůstává systémové. */
+val Display = FontFamily(
+    Font(R.font.chakra_medium, FontWeight.Medium),
+    Font(R.font.chakra_semibold, FontWeight.SemiBold),
+    Font(R.font.chakra_bold, FontWeight.Bold),
+)
+
+// ---------- Tvary „Arena“ ----------
+
+/** Zkosené rohy (vlevo nahoře a vpravo dole) – typický tvar herního HUD. */
+class ChamferShape(private val cut: Dp) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val c = with(density) { cut.toPx() }.coerceAtMost(minOf(size.width, size.height) / 2f)
+        val p = Path().apply {
+            moveTo(c, 0f)
+            lineTo(size.width, 0f)
+            lineTo(size.width, size.height - c)
+            lineTo(size.width - c, size.height)
+            lineTo(0f, size.height)
+            lineTo(0f, c)
+            close()
+        }
+        return Outline.Generic(p)
+    }
+}
+
+/** Rovnoběžník – šikmé tlačítko jako v herních menu. */
+class SkewShape(private val skew: Dp) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline {
+        val k = with(density) { skew.toPx() }
+        val p = Path().apply {
+            moveTo(k, 0f)
+            lineTo(size.width, 0f)
+            lineTo(size.width - k, size.height)
+            lineTo(0f, size.height)
+            close()
+        }
+        return Outline.Generic(p)
+    }
+}
+
+/** HUD rohové značky přes obsah. */
+fun Modifier.hudBrackets(color: Color, len: Dp = 18.dp, inset: Dp = 10.dp, stroke: Dp = 2.dp): Modifier = drawWithContent {
+    drawContent()
+    val l = len.toPx()
+    val o = inset.toPx()
+    val s = stroke.toPx()
+    val w = size.width
+    val h = size.height
+    drawLine(color, Offset(o, o), Offset(o + l, o), s)
+    drawLine(color, Offset(o, o), Offset(o, o + l), s)
+    drawLine(color, Offset(w - o, o), Offset(w - o - l, o), s)
+    drawLine(color, Offset(w - o, o), Offset(w - o, o + l), s)
+    drawLine(color, Offset(o, h - o), Offset(o + l, h - o), s)
+    drawLine(color, Offset(o, h - o), Offset(o, h - o - l), s)
+    drawLine(color, Offset(w - o, h - o), Offset(w - o - l, h - o), s)
+    drawLine(color, Offset(w - o, h - o), Offset(w - o, h - o - l), s)
+}
+
+/** Kosočtverečná tečka stavu. */
+@Composable
+fun Diamond(color: Color, size: Dp = 7.dp) {
+    Box(Modifier.size(size).rotate(45f).background(color))
+}
+
+/** Segmentová lišta jako HP/energie ve hře. */
+@Composable
+fun SegmentBar(fraction: Float, color: Color, modifier: Modifier = Modifier, segments: Int = 12) {
+    val anim by animateFloatAsState(fraction.coerceIn(0f, 1f), tween(650), label = "seg")
+    Canvas(modifier) {
+        val gap = 3.dp.toPx()
+        val w = (size.width - gap * (segments - 1)) / segments
+        val skew = size.height * 0.4f
+        val on = (anim * segments).roundToInt()
+        for (i in 0 until segments) {
+            val x = i * (w + gap)
+            val path = Path().apply {
+                moveTo(x + skew, 0f)
+                lineTo(x + w, 0f)
+                lineTo(x + w - skew, size.height)
+                lineTo(x, size.height)
+                close()
+            }
+            drawPath(path, if (i < on) color else Color.White.copy(alpha = 0.08f))
+        }
+    }
+}
+
+/** Řádek HUD ukazatele: popisek – segmentová lišta – hodnota. */
+@Composable
+fun HudMetric(label: String, value: String, fraction: Float, color: Color) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = TextDim, fontSize = 13.sp, modifier = Modifier.width(86.dp))
+        SegmentBar(fraction, color, Modifier.weight(1f).height(10.dp))
+        Text(
+            value,
+            fontFamily = Display,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp,
+            textAlign = TextAlign.End,
+            modifier = Modifier.width(66.dp),
+        )
+    }
+}
+
+/** Diagonální „rychlostní“ pruhy, slábnoucí doprava (pozadí banneru). */
+@Composable
+fun SpeedLines(modifier: Modifier = Modifier, color: Color = Color.White) {
+    Canvas(modifier) {
+        val step = 14.dp.toPx()
+        var x = -size.height
+        while (x < size.width) {
+            val a = (1f - (x / size.width).coerceIn(0f, 1f)) * 0.06f
+            drawLine(color.copy(alpha = a), Offset(x, size.height), Offset(x + size.height * 0.47f, 0f), 2.dp.toPx())
+            x += step
+        }
+    }
+}
 
 @Composable
 fun ZukuTheme(content: @Composable () -> Unit) {
@@ -81,6 +216,15 @@ fun ZukuTheme(content: @Composable () -> Unit) {
             surfaceVariant = CardBg,
             onSurfaceVariant = TextDim,
         ),
+        typography = Typography().let { t ->
+            t.copy(
+                headlineLarge = t.headlineLarge.copy(fontFamily = Display, fontWeight = FontWeight.Bold),
+                headlineMedium = t.headlineMedium.copy(fontFamily = Display, fontWeight = FontWeight.Bold),
+                titleLarge = t.titleLarge.copy(fontFamily = Display, fontWeight = FontWeight.SemiBold),
+                titleMedium = t.titleMedium.copy(fontFamily = Display, fontWeight = FontWeight.SemiBold),
+                labelLarge = t.labelLarge.copy(fontFamily = Display, fontWeight = FontWeight.SemiBold),
+            )
+        },
         content = content,
     )
 }
@@ -104,6 +248,7 @@ fun optIcon(o: Opt): String = when (o) {
     Opt.HEADS_UP -> "💬"
     Opt.REFRESH -> "🖥️"
     Opt.BATTERY_SAVER -> "🔋"
+    Opt.FORCE_MODE -> "📺"
     Opt.GAME_MODE -> "🎮"
     Opt.XIAOMI_PERF -> "⚡"
     Opt.FIXED_PERF -> "📏"
@@ -119,9 +264,12 @@ fun optIcon(o: Opt): String = when (o) {
 
 // ---------- Karty a nadpisy ----------
 
-private val CardShape = RoundedCornerShape(22.dp)
+private val CardShape = ChamferShape(14.dp)
 
-/** Skleněná karta s jemným přechodovým rámečkem v barvě akcentu. */
+/**
+ * Klidná karta: plochý grafit s vlasovou linkou. Výrazná je jen karta hry na domovské obrazovce –
+ * ostatní karty nesoupeří o pozornost.
+ */
 @Composable
 fun NeonCard(
     modifier: Modifier = Modifier,
@@ -133,27 +281,17 @@ fun NeonCard(
         modifier
             .fillMaxWidth()
             .clip(CardShape)
-            .background(Brush.verticalGradient(listOf(CardBgHi, CardBg)))
-            .border(
-                1.dp,
-                Brush.linearGradient(listOf(accent.copy(alpha = 0.7f), Color.White.copy(alpha = 0.04f), NeonCyan.copy(alpha = 0.25f))),
-                CardShape,
-            )
+            .background(CardBg)
+            .border(1.dp, Color.White.copy(alpha = 0.06f), CardShape)
             .padding(18.dp),
     ) {
         if (title != null) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    title.uppercase(),
-                    color = accent,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 12.sp,
-                    letterSpacing = 1.6.sp,
-                )
+                Box(Modifier.size(width = 3.dp, height = 16.dp).clip(RoundedCornerShape(2.dp)).background(accent))
+                Spacer(Modifier.width(10.dp))
+                Text(title, color = Color.White, fontFamily = Display, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(12.dp))
         }
         content()
     }
@@ -161,22 +299,20 @@ fun NeonCard(
 
 @Composable
 fun SectionHeader(text: String, color: Color = NeonCyan) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 10.dp, start = 4.dp)) {
-        Box(
-            Modifier
-                .width(18.dp)
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(Brush.horizontalGradient(listOf(color, color.copy(alpha = 0f)))),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(text.uppercase(), color = color, fontWeight = FontWeight.Black, fontSize = 12.sp, letterSpacing = 2.4.sp)
-    }
+    Text(
+        text,
+        color = TextDim,
+        fontFamily = Display,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 14.sp,
+        letterSpacing = 0.4.sp,
+        modifier = Modifier.padding(top = 14.dp, start = 4.dp),
+    )
 }
 
 // ---------- Tlačítka ----------
 
-private val PillShape = RoundedCornerShape(50)
+private val PillShape = ChamferShape(9.dp)
 
 /** Tlačítko ve tvaru pilulky – plné s přechodem, nebo obrysové. Při stisku se lehce zmenší. */
 @Composable
@@ -210,79 +346,84 @@ fun NeonButton(
                 outlined -> color
                 else -> Color.White
             },
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp,
-            letterSpacing = 0.4.sp,
+            fontFamily = Display,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 15.sp,
+            letterSpacing = 0.3.sp,
             textAlign = TextAlign.Center,
         )
     }
 }
 
-/** Velké tlačítko spuštění hry: zářivý přechod, pulzující záře a přejíždějící odlesk. */
+/** Šikmé tlačítko ▶▶ Spustit hru: plná plazma, běžící diagonální pruhy a záře pod ním. */
 @Composable
 fun LaunchButton(enabled: Boolean, onClick: () -> Unit) {
     val transition = rememberInfiniteTransition(label = "launch")
+    val stripe by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1_100, easing = LinearEasing)),
+        label = "stripe",
+    )
     val glow by transition.animateFloat(
-        initialValue = 0.35f,
+        initialValue = 0.45f,
         targetValue = 0.9f,
         animationSpec = infiniteRepeatable(tween(1_200), RepeatMode.Reverse),
         label = "glow",
     )
-    val shine by transition.animateFloat(
-        initialValue = -0.4f,
-        targetValue = 1.4f,
-        animationSpec = infiniteRepeatable(tween(2_400, easing = LinearEasing)),
-        label = "shine",
-    )
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.97f else 1f, tween(110), label = "press")
-    val shape = RoundedCornerShape(20.dp)
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(66.dp)
-            .scale(scale)
-            .shadow(
-                elevation = if (enabled) 26.dp else 0.dp,
-                shape = shape,
-                ambientColor = NeonRed.copy(alpha = glow),
-                spotColor = NeonRed.copy(alpha = glow),
+    val shape = SkewShape(16.dp)
+    Box(Modifier.fillMaxWidth().height(62.dp).scale(scale)) {
+        if (enabled) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth(0.82f)
+                    .height(18.dp)
+                    .shadow(22.dp, RoundedCornerShape(50), ambientColor = NeonRed.copy(alpha = glow), spotColor = NeonRed.copy(alpha = glow)),
             )
-            .clip(shape)
-            .background(
-                if (enabled) {
-                    Brush.horizontalGradient(listOf(Color(0xFFE0003C), NeonRed, Color(0xFFFF5E7E)))
-                } else {
-                    SolidColor(Disabled)
+        }
+        Box(
+            Modifier
+                .matchParentSize()
+                .clip(shape)
+                .background(if (enabled) NeonRed else Disabled)
+                .drawBehind {
+                    if (enabled) {
+                        val step = 18.dp.toPx()
+                        val band = 6.dp.toPx()
+                        val k = size.height * 0.47f
+                        var x = -size.height + stripe * step
+                        while (x < size.width + size.height) {
+                            val p = Path().apply {
+                                moveTo(x, size.height)
+                                lineTo(x + k, 0f)
+                                lineTo(x + k + band, 0f)
+                                lineTo(x + band, size.height)
+                                close()
+                            }
+                            drawPath(p, Color.White.copy(alpha = 0.13f))
+                            x += step
+                        }
+                    }
                 }
-            )
-            .drawBehind {
-                if (enabled) {
-                    // přejíždějící odlesk
-                    val x = size.width * shine
-                    drawRect(
-                        brush = Brush.linearGradient(
-                            listOf(Color.Transparent, Color.White.copy(alpha = 0.28f), Color.Transparent),
-                            start = Offset(x - size.width * 0.25f, 0f),
-                            end = Offset(x + size.width * 0.25f, size.height),
-                        ),
-                    )
-                }
+                .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("▶▶", color = if (enabled) Color.White else TextDim, fontSize = 17.sp, letterSpacing = (-3).sp)
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "Launch game",
+                    color = if (enabled) Color.White else TextDim,
+                    fontFamily = Display,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 21.sp,
+                    letterSpacing = 0.5.sp,
+                )
             }
-            .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("▶", color = if (enabled) Color.White else TextDim, fontSize = 20.sp)
-            Spacer(Modifier.width(12.dp))
-            Text(
-                "SPUSTIT HRU",
-                color = if (enabled) Color.White else TextDim,
-                fontWeight = FontWeight.Black,
-                fontSize = 18.sp,
-                letterSpacing = 2.5.sp,
-            )
         }
     }
 }
@@ -291,7 +432,7 @@ fun LaunchButton(enabled: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun StatChip(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = ChamferShape(10.dp)
     Column(
         modifier
             .clip(shape)
@@ -299,9 +440,9 @@ fun StatChip(label: String, value: String, color: Color, modifier: Modifier = Mo
             .border(1.dp, color.copy(alpha = 0.35f), shape)
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
-        Text(label, color = TextDim, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextDim, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(2.dp))
-        Text(value, color = color, fontSize = 17.sp, fontWeight = FontWeight.Black)
+        Text(value, color = color, fontSize = 19.sp, fontFamily = Display, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -335,22 +476,29 @@ fun StatGauge(label: String, value: String, fraction: Float, color: Color, modif
                     style = Stroke(stroke, cap = StrokeCap.Round),
                 )
             }
-            Text(value, color = Color.White, fontWeight = FontWeight.Black, fontSize = 15.sp)
+            Text(value, color = Color.White, fontFamily = Display, fontWeight = FontWeight.Bold, fontSize = 19.sp)
         }
-        Text(label, color = TextDim, fontSize = 10.sp, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold)
+        Text(label, color = TextDim, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
+/** Štítek s barevnou hranou vlevo (FPS, Hz, kill list…). */
 @Composable
 fun ProfileChip(text: String, color: Color = NeonCyan) {
-    Box(
+    Row(
         Modifier
-            .clip(PillShape)
-            .background(color.copy(alpha = 0.12f))
-            .border(1.dp, color.copy(alpha = 0.45f), PillShape)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .height(IntrinsicSize.Min)
+            .background(Color.White.copy(alpha = 0.08f)),
     ) {
-        Text(text, color = color, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Box(Modifier.width(2.dp).fillMaxHeight().background(color))
+        Text(
+            text,
+            color = Color.White,
+            fontSize = 12.sp,
+            fontFamily = Display,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+        )
     }
 }
 
@@ -362,7 +510,6 @@ fun OptionRow(o: Opt, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
             .clickable { onChange(!checked) }
             .padding(vertical = 8.dp, horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -370,9 +517,9 @@ fun OptionRow(o: Opt, checked: Boolean, onChange: (Boolean) -> Unit) {
         Box(
             Modifier
                 .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(ChamferShape(9.dp))
                 .background(if (checked) NeonRed.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.05f))
-                .border(1.dp, accent.copy(alpha = if (checked) 0.5f else 0.12f), RoundedCornerShape(12.dp)),
+                .border(1.dp, accent.copy(alpha = if (checked) 0.5f else 0.12f), ChamferShape(9.dp)),
             contentAlignment = Alignment.Center,
         ) {
             Text(optIcon(o), fontSize = 18.sp)
@@ -399,42 +546,50 @@ fun OptionRow(o: Opt, checked: Boolean, onChange: (Boolean) -> Unit) {
 
 // ---------- Navigace ----------
 
-/** Plovoucí spodní lišta: skleněná pilulka, vybraná položka svítí s popiskem. */
+/** Spodní lišta: zkosený grafit s plazmovou linkou nahoře, aktivní položka svítí podtržením. */
 @Composable
 fun FloatingNavBar(items: List<Pair<String, String>>, selected: Int, onSelect: (Int) -> Unit) {
+    val shape = ChamferShape(12.dp)
     Box(
         Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .shadow(18.dp, PillShape, ambientColor = NeonRed.copy(alpha = 0.4f), spotColor = NeonRed.copy(alpha = 0.4f))
-                .clip(PillShape)
-                .background(Brush.verticalGradient(listOf(Color(0xF2181C28), Color(0xF20C0E14))))
-                .border(1.dp, Brush.horizontalGradient(listOf(NeonRed.copy(alpha = 0.5f), NeonCyan.copy(alpha = 0.4f))), PillShape)
-                .padding(6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .clip(shape)
+                .background(Color(0xF512141F))
+                .drawBehind { drawLine(NeonRed.copy(alpha = 0.55f), Offset(12.dp.toPx(), 0f), Offset(size.width, 0f), 1.5.dp.toPx()) }
+                .padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             items.forEachIndexed { i, (icon, label) ->
                 val isSel = i == selected
-                val bg by animateColorAsState(if (isSel) NeonRed.copy(alpha = 0.22f) else Color.Transparent, tween(220), label = "nav")
-                Row(
+                val line by animateColorAsState(if (isSel) NeonRed else Color.Transparent, tween(200), label = "nav")
+                Column(
                     Modifier
-                        .clip(PillShape)
-                        .background(bg)
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(i) }
-                        .padding(horizontal = if (isSel) 14.dp else 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text(icon, fontSize = 18.sp)
-                    if (isSel) {
-                        Spacer(Modifier.width(6.dp))
-                        Text(label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(icon, fontSize = 18.sp)
+                        if (isSel) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(label, color = Color.White, fontFamily = Display, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1)
+                        }
                     }
+                    Spacer(Modifier.height(5.dp))
+                    Box(
+                        Modifier
+                            .width(if (isSel) 34.dp else 0.dp)
+                            .height(3.dp)
+                            .shadow(if (isSel) 8.dp else 0.dp, RoundedCornerShape(2.dp), ambientColor = NeonRed, spotColor = NeonRed)
+                            .background(line),
+                    )
                 }
             }
         }
@@ -463,9 +618,9 @@ fun BusyOverlay(text: String) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .padding(32.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .clip(ChamferShape(16.dp))
                 .background(CardBg)
-                .border(1.dp, NeonRed.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
+                .border(1.dp, NeonRed.copy(alpha = 0.4f), ChamferShape(16.dp))
                 .padding(horizontal = 28.dp, vertical = 24.dp),
         ) {
             Text("⚡", fontSize = 44.sp, color = NeonRed.copy(alpha = pulse))
@@ -475,7 +630,9 @@ fun BusyOverlay(text: String) {
             Text(
                 text,
                 color = Color.White,
-                fontWeight = FontWeight.Bold,
+                fontFamily = Display,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 16.sp,
                 textAlign = TextAlign.Center,
             )
         }

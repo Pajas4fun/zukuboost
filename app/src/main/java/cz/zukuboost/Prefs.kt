@@ -6,128 +6,135 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 enum class Opt(val key: String, val title: String, val desc: String, val default: Boolean) {
-    KILL_BG("opt_kill", "Vyčistit pozadí", "Při startu hry ukončí aplikace z kill listu a uvolní procesy v cache.", true),
-    RESTRICT_BG("opt_restrict", "Držet kill list mimo pozadí", "Aplikace z kill listu se během hraní nemůžou samy znovu spustit na pozadí.", true),
+    KILL_BG("opt_kill", "Clean background", "When a game starts, closes apps from the kill list and frees cached processes.", true),
+    RESTRICT_BG("opt_restrict", "Keep closed apps out of the background", "Closed apps can't restart themselves in the background while you play.", true),
     SYSTEM_HOGS(
         "opt_hogs",
-        "Utlumit systémové žrouty",
-        "Zastaví aktualizace z Obchodu Play / GetApps, analytiku a reklamy Xiaomi, skenování galerie a optimalizaci appek na pozadí. Časté příčiny náhlých záseků.",
+        "Throttle system resource hogs",
+        "Stops Play Store / GetApps updates, Xiaomi analytics and ads, gallery scanning and background app optimization. Common causes of sudden stutters.",
         true,
     ),
-    SYNC_OFF("opt_sync", "Vypnout synchronizaci účtů", "Google, e-mail a cloud během hraní nesynchronizují (žádné náhlé zátěže úložiště). Po hře se vrátí.", true),
+    SYNC_OFF("opt_sync", "Turn off account sync", "Google, e-mail and cloud don't sync while you play (no sudden storage load). Restored after the game.", true),
     DISPLAY(
         "opt_display",
-        "Displej: vypnout auto jas a režim čtení",
-        "Doporučení přímo od Xiaomi: jas se během hry nemění a odpadá dodatečné zpracování obrazu. Po hře se vrátí.",
+        "Display: turn off auto brightness and reading mode",
+        "Recommended by Xiaomi itself: brightness doesn't change during the game and extra image processing is skipped. Restored after the game.",
         true,
     ),
     LOCATION_OFF(
         "opt_location",
-        "Vypnout polohu během hraní",
-        "Appky na pozadí nebudou zjišťovat polohu (GPS, skenování Wi-Fi a Bluetooth kvůli poloze). Nezapínej, pokud hra polohu potřebuje.",
+        "Turn off location while playing",
+        "Background apps won't look up your location (GPS, Wi-Fi and Bluetooth scanning for location). Don't enable if the game needs location.",
         false,
     ),
     NET_BLOCK_BG(
         "opt_netblock",
-        "Odříznout internet appkám na pozadí",
-        "Appky z kill listu (a s utlumením i Obchod Play a GetApps) během hry nemají přístup k internetu – nic nestahují a nebere to hře linku. " +
-            "Hlasové appky a hra se neblokují. Po hře se vše vrátí, restart telefonu pravidla smaže taky.",
+        "Cut internet for background apps",
+        "Closed apps (and with throttling also Play Store and GetApps) have no internet during the game – nothing downloads and the game keeps the bandwidth. " +
+            "Voice apps and the game are never blocked. Everything is restored after the game; a phone restart clears the rules too.",
         true,
     ),
     NETWORK_QUIET(
         "opt_net",
-        "Síť: klidný režim",
-        "Během hry vypne „mobilní data vždy aktivní“, Wi-Fi asistenta Xiaomi a skenování zařízení v okolí. Méně zahřívání a méně výkyvů pingu. " +
-            "Nevýhoda: když Wi-Fi vypadne, telefon nepřepne na data sám.",
+        "Network: quiet mode",
+        "During the game turns off “mobile data always active”, Xiaomi Wi-Fi assistant and nearby device scanning. Less heat and fewer ping spikes. " +
+            "Downside: if Wi-Fi drops, the phone won't switch to mobile data on its own.",
         false,
     ),
     SCAN_OFF(
         "opt_scan",
-        "Vypnout skenování Wi-Fi a Bluetooth na pozadí",
-        "Skenování na chvíli přerušuje Wi-Fi spojení a způsobuje skoky pingu. Během hry se vypne, po hře vrátí.",
+        "Turn off background Wi-Fi and Bluetooth scanning",
+        "Scanning briefly interrupts the Wi-Fi connection and causes ping spikes. Off during the game, restored after.",
         true,
     ),
     MILLET(
         "opt_millet",
-        "HyperOS: nezmrazovat hru a hlasové appky",
-        "Přidá hru a Discord/WhatsApp/Telegram do seznamu „Bez omezení“ systému Xiaomi (MILLET_NO_RESTRICT_APP). " +
-            "Když na chvíli odskočíš do jiné appky, hra ani hovor nezamrzne. Jen Xiaomi/Redmi/POCO.",
+        "HyperOS: don't freeze the game and voice apps",
+        "Adds the game and Discord/WhatsApp/Telegram to Xiaomi's “No restrictions” list (MILLET_NO_RESTRICT_APP). " +
+            "When you briefly switch to another app, neither the game nor the call freezes. Xiaomi/Redmi/POCO only.",
         true,
     ),
     PROTECT_VOICE(
         "opt_voice",
-        "Chránit hlasové appky",
-        "Discord, WhatsApp, Telegram, Skype a Teams nebudou během hraní uspané ani omezené – hovor ani stream z telefonu nevypadne. Appky z kill listu se nechrání.",
+        "Protect voice apps",
+        "Discord, WhatsApp, Telegram, Skype and Teams won't be put to sleep or restricted while you play – calls and streams from the phone won't drop. Apps in the kill list aren't protected.",
         true,
     ),
     HIDE_NOTIF(
         "opt_hidenotif",
-        "Úplně skrýt oznámení",
-        "Během hry se oznámení vůbec neukážou – žádné bannery, ikony v liště, tečky na ikonách ani blikání. " +
-            "Počkají a uvidíš je po hře. Zapne i Nerušit.",
+        "Hide notifications completely",
+        "Notifications don't show at all during the game – no banners, status bar icons, icon dots or blinking. " +
+            "They wait and you'll see them after the game. Also turns on Do Not Disturb.",
         true,
     ),
-    DND("opt_dnd", "Režim Nerušit", "Během hraní zapne Nerušit (projdou jen prioritní hovory).", true),
+    DND("opt_dnd", "Do Not Disturb", "Turns on Do Not Disturb while you play (only priority calls get through).", true),
     BLOCK_CALLS(
         "opt_blockcalls",
-        "Blokovat i hovory",
-        "Nerušit v režimu „jen budíky“ – během hry neprojde žádný hovor ani oznámení (jako Priority mode u Samsungu nebo Pro Gaming u OnePlus). Funguje se zapnutým Nerušit.",
+        "Block calls too",
+        "Do Not Disturb in “alarms only” mode – no calls or notifications get through during the game (like Samsung's Priority mode or OnePlus Pro Gaming). Works with Do Not Disturb on.",
         false,
     ),
-    HEADS_UP("opt_headsup", "Blokovat vyskakovací oznámení", "Žádné bannery přes hru – každý banner navíc zatěžuje vykreslování.", true),
-    REFRESH("opt_refresh", "Hz displeje podle hry", "Bez FPS limitu maximální Hz. S limitem Hz, které jsou jeho násobkem (např. limit 45 → 90 Hz), aby snímky šly rovnoměrně.", true),
-    BATTERY_SAVER("opt_saver", "Vypnout spořič baterie", "Spořič škrtí výkon, během hraní se vypne.", true),
-    GAME_MODE("opt_gamemode", "Android Game Mode: výkon", "Přepne hru do performance režimu, pokud ho hra a systém podporují.", true),
+    HEADS_UP("opt_headsup", "Block heads-up notifications", "No banners over the game – every banner adds rendering load.", true),
+    REFRESH("opt_refresh", "Display Hz for the game", "Without an FPS cap, maximum Hz. With a cap, Hz that is a multiple of it (e.g. cap 45 → 90 Hz) so frames are evenly paced.", true),
+    FORCE_MODE(
+        "opt_forcemode",
+        "Force display mode",
+        "If the game still runs at 90 Hz despite the Hz lock, try this: sets the preferred display mode (resolution + Hz) directly " +
+            "through Android's display manager. Restored after the game. Experimental.",
+        false,
+    ),
+    BATTERY_SAVER("opt_saver", "Turn off battery saver", "Battery saver throttles performance, so it's turned off while you play.", true),
+    GAME_MODE("opt_gamemode", "Android Game Mode: performance", "Switches the game to performance mode if the game and system support it.", true),
     XIAOMI_PERF(
         "opt_xiaomiperf",
-        "Xiaomi výkonový profil (experimentální)",
-        "Během hraní přepne systémový profil Xiaomi na výkon (power_mode) a zapne režim vysokých FPS (speed_mode). Víc výkonu, víc tepla. Jen Xiaomi/Redmi/POCO.",
+        "Xiaomi performance profile (experimental)",
+        "While you play, switches Xiaomi's system profile to performance (power_mode) and enables high-FPS mode (speed_mode). More performance, more heat. Xiaomi/Redmi/POCO only.",
         false,
     ),
     FIXED_PERF(
         "opt_fixedperf",
-        "Stabilní takty (fixed performance)",
-        "Podle Googlu NEDÁVÁ maximální výkon – zamkne CPU/GPU na nižší, udržitelný bod. Méně výkyvů, ale nižší špička. " +
-            "Hodí se jen pro dlouhé hraní na stabilní FPS. Funguje jen na části telefonů.",
+        "Stable clocks (fixed performance)",
+        "According to Google this does NOT give maximum performance – it locks CPU/GPU at a lower, sustainable point. Fewer swings, but a lower peak. " +
+            "Only useful for long sessions at stable FPS. Works on some phones only.",
         false,
     ),
     THERMAL(
         "opt_thermal",
-        "Nehlásit hrám přehřátí (experimentální)",
-        "Některé hry samy snižují grafiku, když systém hlásí teplo. Tohle hlášení zamkne na OK. " +
-            "Skutečné škrcení CPU (řídí ho výrobce) to NEVYPNE – pomáhá jen hrám, které se samy omezují. Při 44 °C baterie se pojistka sama vrátí.",
+        "Hide overheating from games (experimental)",
+        "Some games lower their graphics when the system reports heat. This locks the report at OK. " +
+            "It does NOT turn off real CPU throttling (controlled by the manufacturer) – it only helps games that limit themselves. At 44 °C battery the safety net restores it.",
         false,
     ),
     SMART_COOL(
         "opt_smartcool",
-        "Chytré chlazení",
-        "Hlídá teplotu baterie. Když je telefon delší dobu přes nastavenou hranici, sníží Hz displeje o stupeň, " +
-            "o 3 °C výš na 60 Hz a jas −15 %. O 3 °C pod hranicí se vše vrátí. Hranici nastavíš níž. Upozorní i na hraní na nabíječce.",
+        "Smart cooling",
+        "Watches battery temperature. When the phone stays above the set limit for a while, it lowers display Hz by one step, " +
+            "3 °C higher to 60 Hz and brightness −15 %. 3 °C below the limit everything is restored. Set the limit below. Also warns when you play while charging.",
         true,
     ),
     AUTO_HZ(
         "opt_autohz",
-        "Hz podle skutečných FPS hry",
-        "Po minutě hraní změří, kolik FPS hra opravdu dává, a sníží Hz displeje na nejbližší vyšší hodnotu (např. hra na 60 FPS → 60 Hz). " +
-            "Méně tepla a rovnoměrnější snímky – jako Touch Choreographer u RedMagic nebo doporučení ASUS ROG. Platí jen bez FPS limitu.",
-        false,
+        "Hz matched to the game's real FPS",
+        "After a minute of play, measures the game's real FPS and lowers display Hz to the nearest higher value (e.g. a 60 FPS game → 60 Hz). " +
+            "Less heat and more even frames – like RedMagic's Touch Choreographer or ASUS ROG's advice. A 90 FPS game on a 120 Hz display otherwise judders (frames aren't evenly paced). Lobby and loading aren't counted, and when the game wants more, Hz goes back up. Only without an FPS cap.",
+        true,
     ),
     EDGE_BLOCK(
         "opt_edge",
-        "Blokovat dotyky na okrajích",
-        "Úzké pruhy u levého a pravého okraje nereagují na dotyk – dlaň pod palcem nic nezmáčkne (jako Blocked touch edges u ASUS ROG). Šířka jde nastavit níž.",
+        "Block touches at the edges",
+        "Narrow strips at the left and right edges ignore touch – your palm won't press anything (like ASUS ROG's Blocked touch edges). Width can be set below.",
         false,
     ),
-    ANIMATIONS("opt_anim", "Vypnout systémové animace", "Rychlejší přechody v systému během hraní.", false),
-    MEASURE("opt_measure", "Měřit FPS a teploty", "Ukládá do Historie ø FPS, minimum, počet propadů a max. teploty každé hry.", true),
+    ANIMATIONS("opt_anim", "Turn off system animations", "Faster system transitions while you play.", false),
+    MEASURE("opt_measure", "Measure FPS and temperatures", "Saves average FPS, minimum, drop count and max temperatures of every game to History.", true),
     GAME_PANEL(
         "opt_panel",
-        "Herní panel ve hře",
-        "U pravého okraje se ve hře objeví úzký úchyt. Klepnutím vysuneš panel: snímek, nahrávání, overlay, blokování okrajů, " +
-            "vyčištění RAM a zámek dotyku. Úchytem jde posouvat nahoru a dolů.",
+        "In-game panel",
+        "A narrow handle appears at the right edge in game. Tap it to slide out the panel: screenshot, recording, overlay, edge blocking, " +
+            "RAM cleanup and touch lock. Drag the handle up and down to move it.",
         true,
     ),
-    OVERLAY("opt_overlay", "Overlay ve hře", "Plovoucí ukazatel FPS, propadů, teplot a příkonu. Dá se přetáhnout.", true),
+    OVERLAY("opt_overlay", "In-game overlay", "Floating display of FPS, drops, temperatures and power draw. Can be dragged.", true),
 }
 
 data class Session(
@@ -160,6 +167,34 @@ class Prefs(ctx: Context) {
             sp.edit().putStringSet("kill_list", HashSet(v)).apply()
         }
 
+    /** Režim ukončování: 0 = jen appky z kill listu, 1 = vše kromě výjimek. */
+    var killMode: Int
+        get() = sp.getInt("kill_mode", 1)
+        set(v) {
+            sp.edit().putInt("kill_mode", v).apply()
+        }
+
+    /** Výjimky – appky, které se při spuštění hry NEukončí (režim „vše kromě výjimek“). */
+    var keepList: Set<String>
+        get() = getSet("keep_list")
+        set(v) {
+            sp.edit().putStringSet("keep_list", HashSet(v)).apply()
+        }
+
+    /** Doporučené nastavení podle telefonu už jednou použité? */
+    var deviceApplied: Boolean
+        get() = sp.getBoolean("device_applied", false)
+        set(v) {
+            sp.edit().putBoolean("device_applied", v).apply()
+        }
+
+    /** Doporučené výjimky už jednou předvyplněné? */
+    var keepInitDone: Boolean
+        get() = sp.getBoolean("keep_init", false)
+        set(v) {
+            sp.edit().putBoolean("keep_init", v).apply()
+        }
+
     /** Aplikace, kterým jsme během hraní zakázali běh na pozadí (vrací se po hře). */
     var restricted: Set<String>
         get() = getSet("restricted")
@@ -188,7 +223,7 @@ class Prefs(ctx: Context) {
             sp.edit().putString("sync_mode_orig", v).commit()
         }
 
-    /** Původní standby buckety appek z kill listu ve formátu "balíček=číslo". */
+    /** Původní standby buckety appek z kill listu ve formátu "package=number". */
     var bucketOrig: Set<String>
         get() = getSet("bucket_orig")
         set(v) {
@@ -297,6 +332,20 @@ class Prefs(ctx: Context) {
             sp.edit().putString("cool_brightness", v).commit()
         }
 
+    /** Ruční volba Hz ve hře: 0 = automaticky, jinak 60/90/120/144. */
+    var hzMode: Int
+        get() = sp.getInt("hz_mode", 0)
+        set(v) {
+            sp.edit().putInt("hz_mode", v).apply()
+        }
+
+    /** Preferovaný režim displeje před hrou ("none" = nebyl nastavený). */
+    var userModeBackup: String?
+        get() = sp.getString("user_mode_backup", null)
+        set(v) {
+            sp.edit().putString("user_mode_backup", v).commit()
+        }
+
     /** Teplota baterie, od které začne chytré chlazení (°C). */
     var coolStartC: Int
         get() = sp.getInt("cool_start", 44)
@@ -364,6 +413,7 @@ class Prefs(ctx: Context) {
         e.remove("sync_mode_orig")
         e.remove("bucket_orig")
         e.remove("policy_backup")
+        e.remove("user_mode_backup")
         e.putBoolean("boost_active", false)
         e.commit()
     }

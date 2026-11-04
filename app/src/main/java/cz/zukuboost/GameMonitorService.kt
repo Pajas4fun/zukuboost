@@ -85,6 +85,9 @@ class GameMonitorService : Service(), GamePanelController.Listener {
     private var recordPath = ""
     private var recordJob: Job? = null
     private var autoHzDone = false
+    private var autoHzApplied = 0f
+    private var autoHzBaseline = 0f
+    private var autoHzCooldownUntil = 0L
     private var ignoredFg: String? = null
     private var ignoredFgSince = 0L
 
@@ -154,7 +157,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
             if (path.isNotEmpty()) {
                 android.media.MediaScannerConnection.scanFile(this@GameMonitorService, arrayOf(path), null, null)
             }
-            showToast(if (path.isNotEmpty()) "Snímek uložen do Obrázky/ZukuBoost" else "Snímek se nepodařil")
+            showToast(if (path.isNotEmpty()) "Screenshot saved to Pictures/ZukuBoost" else "Screenshot failed")
         }
     }
 
@@ -196,7 +199,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
             val killed = runCatching { BoostEngine.preLaunchClean(this@GameMonitorService, game) }.getOrDefault(0)
             delay(800)
             val freed = (freeMb() - before).coerceAtLeast(0)
-            showToast("Uvolněno $freed MB · ukončeno $killed appek")
+            showToast("Freed $freed MB · closed $killed apps")
         }
     }
 
@@ -233,7 +236,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 if (recordPath.isEmpty()) return@launch
                 recording = true
                 withContext(Dispatchers.Main) { refreshNotification() }
-                showToast("Nahrávám (bez zvuku, max 3 min)")
+                showToast("Recording (no sound, max 3 min)")
                 recordJob?.cancel()
                 recordJob = scope.launch {
                     delay(182_000) // screenrecord se sám zastaví po 3 minutách
@@ -256,7 +259,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
             android.media.MediaScannerConnection.scanFile(this, arrayOf(path), null, null)
         }
         withContext(Dispatchers.Main) { refreshNotification() }
-        showToast("Video uloženo do Filmy/ZukuBoost")
+        showToast("Video saved to Movies/ZukuBoost")
     }
 
     private suspend fun showToast(text: String) {
@@ -375,9 +378,13 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         lastApplyTry = SystemClock.elapsedRealtime()
         val result = runCatching { BoostEngine.apply(this, pkg) }
         applied = result.isSuccess
+        val summary = if (applied) BoostEngine.analysisSummary(this) else ""
         setStatus(
-            if (applied) "Boost aktivní: ${label(pkg)}"
-            else "Čekám na Shizuku… (${result.exceptionOrNull()?.message})"
+            when {
+                applied && summary.isNotEmpty() -> "Boost active: ${label(pkg)} · $summary"
+                applied -> "Boost active: ${label(pkg)}"
+                else -> "Waiting for Shizuku… (${result.exceptionOrNull()?.message})"
+            }
         )
     }
 
@@ -390,6 +397,8 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         tryApply(pkg)
         if (prefs.opt(Opt.THERMAL)) startThermalGuard()
         autoHzDone = false
+        autoHzApplied = 0f
+        autoHzCooldownUntil = 0L
         baseHz = BoostEngine.sessionHz(this, pkg)
         if (prefs.opt(Opt.SMART_COOL)) startCooling(pkg)
         if (prefs.opt(Opt.GAME_PANEL) && Settings.canDrawOverlays(this)) {
@@ -437,7 +446,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         }
         val hadBoost = prefs.boostActive
         val restored = runCatching { BoostEngine.restore(this) }.isSuccess
-        if (restored && hadBoost) showToast("✓ Hra ukončena – nastavení vrácena")
+        if (restored && hadBoost) showToast("✓ Game closed – settings restored")
 
         val elapsed = SystemClock.elapsedRealtime() - sessionStart
         val minutes = elapsed / 60_000
@@ -460,15 +469,15 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         }
         prefs.lastSession = buildString {
             append(name).append(" · ").append(minutes).append(" min")
-            if (avg != null) append(" · ø ").append(avg).append(" FPS · propady ").append(session.drops)
+            if (avg != null) append(" · ø ").append(avg).append(" FPS · drops ").append(session.drops)
         }
         setStatus(idleText())
     }
 
     private fun idleText(): String {
-        if (prefs.paused) return "Pozastaveno"
+        if (prefs.paused) return "Paused"
         val last = prefs.lastSession
-        return if (last.isBlank()) "Čekám na spuštění hry…" else "Čekám na hru · naposledy: $last"
+        return if (last.isBlank()) "Waiting for a game…" else "Waiting for a game · last: $last"
     }
 
     /** Pojistka pro „Nehlásit hrám přehřátí“: při vysoké teplotě vrátí skutečné hlášení. */
@@ -479,7 +488,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 delay(5_000)
                 if (batteryTemp(this@GameMonitorService) >= THERMAL_LIMIT_C) {
                     runCatching { BoostEngine.releaseThermal(this@GameMonitorService) }
-                    setStatus("Pojistka: baterie ${THERMAL_LIMIT_C.toInt()} °C, hlášení teplot vráceno")
+                    setStatus("Safety: battery ${THERMAL_LIMIT_C.toInt()} °C, temperature reporting restored")
                     break
                 }
             }
@@ -511,7 +520,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
 
                 if (!chargeWarned && bm.isCharging && t >= 40f) {
                     chargeWarned = true
-                    showToast("Hraješ na nabíječce – telefon se hřeje víc. Odpoj ho nebo sniž FPS.")
+                    showToast("You're playing while charging – the phone heats up more. Unplug it or lower FPS.")
                 }
                 hotStreak = if (t >= hot1) hotStreak + 1 else 0
                 if (now - lastChange < 30_000) continue // hystereze – žádné cukání sem a tam
@@ -522,25 +531,25 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 when {
                     t >= hot2 && hotStreak >= 2 && coolLevel < 2 -> {
                         coolLevel = 2
-                        runCatching { BoostEngine.setSessionHz(low) }
+                        runCatching { BoostEngine.setSessionHz(this@GameMonitorService, low) }
                         if (brightnessBeforeCool == null) {
                             brightnessBeforeCool = runCatching { BoostEngine.dimBrightness(0.85f) }.getOrNull()
                             prefs.coolBrightness = brightnessBeforeCool
                         }
                         lastChange = now
-                        setStatus("🧊 Chlazení: ${low.toInt()} Hz, jas −15 % · baterie ${t.toInt()} °C")
+                        setStatus("🧊 Cooling: ${low.toInt()} Hz, brightness −15 % · battery ${t.toInt()} °C")
                     }
                     t >= hot1 && hotStreak >= 3 && coolLevel < 1 -> {
                         coolLevel = 1
                         val step = rates.filter { it < base - 1f && it >= low }.maxOrNull() ?: low
-                        runCatching { BoostEngine.setSessionHz(step) }
+                        runCatching { BoostEngine.setSessionHz(this@GameMonitorService, step) }
                         lastChange = now
-                        setStatus("🧊 Chlazení: ${step.toInt()} Hz · baterie ${t.toInt()} °C")
+                        setStatus("🧊 Cooling: ${step.toInt()} Hz · battery ${t.toInt()} °C")
                     }
                     t <= coolBack && coolLevel > 0 -> {
                         coolLevel = 0
                         if (prefs.opt(Opt.REFRESH)) {
-                            runCatching { BoostEngine.setSessionHz(base) }
+                            runCatching { BoostEngine.setSessionHz(this@GameMonitorService, base) }
                         } else {
                             runCatching { BoostEngine.restoreHz(this@GameMonitorService) } // zpět na systémové Hz
                         }
@@ -548,7 +557,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                         brightnessBeforeCool = null
                         prefs.coolBrightness = null
                         lastChange = now
-                        setStatus("Boost aktivní: ${label(pkg)} · zchladnuto, zpět ${base.toInt()} Hz")
+                        setStatus("Boost active: ${label(pkg)} · cooled down, back to ${base.toInt()} Hz")
                     }
                 }
             }
@@ -560,21 +569,42 @@ class GameMonitorService : Service(), GamePanelController.Listener {
      * a nastaví nejnižší Hz, které ho pokryje. Jen jednou za hru, jen bez FPS limitu.
      */
     private suspend fun maybeAutoHz(pkg: String, samples: List<Int>) {
-        if (autoHzDone || samples.size < 30) return
-        autoHzDone = true
-        if (!prefs.opt(Opt.AUTO_HZ) || !prefs.opt(Opt.REFRESH) || prefs.fpsCap(pkg) > 0) return
-        val sorted = samples.sorted()
-        val p95 = sorted[((sorted.size - 1) * 0.95).toInt()]
+        if (!prefs.opt(Opt.AUTO_HZ) || !prefs.opt(Opt.REFRESH) || prefs.fpsCap(pkg) > 0 || prefs.hzMode > 0) return
+        if (coolLevel > 0) return // během chlazení řídí Hz chlazení
+        val now = SystemClock.elapsedRealtime()
+        // Prvních 90 s je často lobby / načítání s nízkým FPS – podle toho Hz nesnižujeme
+        if (now - sessionStart < 90_000 || now < autoHzCooldownUntil || samples.size < 30) return
         val rates = BoostEngine.refreshRates(this)
         val max = rates.maxOrNull() ?: return
-        val target = rates.filter { it >= p95 + 3 }.minOrNull() ?: max
-        if (target < max - 1f) {
-            baseHz = target
-            // Když zrovna chladíme, Hz nezvyšujeme – nová hodnota se použije až po zchladnutí
-            if (coolLevel == 0) {
-                runCatching { BoostEngine.setSessionHz(target) }
-                setStatus("Boost aktivní: ${label(pkg)} · hra ~$p95 FPS → ${target.toInt()} Hz")
+        val recent = samples.takeLast(45)
+
+        if (autoHzApplied > 0f) {
+            // Hra narazila na strop snížených Hz (např. po lobby přešla na 120 FPS) → vrátit maximum
+            val last10 = recent.takeLast(10)
+            // Zvedáme jen když hra dřív běžela znatelně pod sníženými Hz a teď na ně naráží
+            // (hra, která si sama drží 90 FPS, na 90 Hz zůstane – jinak by Hz skákaly sem a tam)
+            val wantsMore = autoHzBaseline <= autoHzApplied - 5f
+            if (wantsMore && last10.size == 10 && last10.count { it >= autoHzApplied - 2f } >= 8) {
+                autoHzApplied = 0f
+                baseHz = max
+                autoHzCooldownUntil = now + 120_000
+                runCatching { BoostEngine.setSessionHz(this@GameMonitorService, max) }
+                setStatus("Boost active: ${label(pkg)} · game wants more FPS → ${max.toInt()} Hz")
             }
+            return
+        }
+
+        val sorted = recent.sorted()
+        val p95 = sorted[((sorted.size - 1) * 0.95).toInt()]
+        // Nejnižší Hz, které pokryjí skutečné FPS (tolerance 2 FPS na nepřesnost měření):
+        // hra na 90 FPS → 90 Hz (rovnoměrné snímky), hra na 60 → 60 Hz
+        val target = rates.filter { it >= p95 - 2f }.minOrNull() ?: max
+        if (target < max - 1f) {
+            autoHzApplied = target
+            autoHzBaseline = p95.toFloat()
+            baseHz = target
+            runCatching { BoostEngine.setSessionHz(this@GameMonitorService, target) }
+            setStatus("Boost active: ${label(pkg)} · game ~$p95 FPS → ${target.toInt()} Hz")
         }
     }
 
@@ -595,7 +625,10 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 while (isActive) {
                     val fps = runCatching { meter.sample() }.getOrNull()
                     if (fps != null) session.add(fps)
-                    if (fps != null && fps > 0) recentFps += fps
+                    if (fps != null && fps > 0) {
+                        recentFps += fps
+                        if (recentFps.size > 120) recentFps.removeAt(0) // stačí poslední ~2 minuty
+                    }
                     maybeAutoHz(pkg, recentFps)
                     val text = stats.format(fps, session, SystemClock.elapsedRealtime() - sessionStart)
                     lastFps = fps
@@ -609,7 +642,8 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                     }
                     val visible = overlay != null
                     if (visible) withContext(Dispatchers.Main) { overlay?.update(text) }
-                    delay(if (visible) 1_000 else 2_000) // bez overlaye stačí měřit méně často
+                    // Každé čtení FPS je dotaz do SurfaceFlingeru – bez overlaye stačí méně často
+                    delay(if (visible || panel?.isOpen == true) 1_000 else 3_000)
                 }
             } finally {
                 withContext(NonCancellable) { runCatching { meter.close() } }
@@ -632,7 +666,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
 
     private fun createChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, "Herní boost", NotificationManager.IMPORTANCE_LOW)
+            NotificationChannel(CHANNEL, "Game boost", NotificationManager.IMPORTANCE_LOW)
         )
     }
 
@@ -644,7 +678,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         val nm = getSystemService(NotificationManager::class.java)
         if (!nm.isNotificationPolicyAccessGranted) return CHANNEL
         if (nm.getNotificationChannel(CHANNEL_DND) == null) {
-            val ch = NotificationChannel(CHANNEL_DND, "Herní boost (přes Nerušit)", NotificationManager.IMPORTANCE_LOW)
+            val ch = NotificationChannel(CHANNEL_DND, "Game boost (bypasses Do Not Disturb)", NotificationManager.IMPORTANCE_LOW)
             ch.setBypassDnd(true)
             nm.createNotificationChannel(ch)
         }
@@ -671,7 +705,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             val locked = touchLock?.isLocked == true
-            builder.addAction(0, if (locked) "🔓 Odemknout" else "🔒 Zámek", lockPi)
+            builder.addAction(0, if (locked) "🔓 Unlock" else "🔒 Lock", lockPi)
         }
         if (activeGame != null) {
             fun action(act: String, code: Int) = PendingIntent.getService(
@@ -680,8 +714,8 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 Intent(this, GameMonitorService::class.java).setAction(act),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            builder.addAction(0, "📸 Snímek", action(ACTION_SCREENSHOT, 2))
-            builder.addAction(0, if (recording) "⏹ Stop" else "⏺ Nahrát", action(ACTION_RECORD, 3))
+            builder.addAction(0, "📸 Screenshot", action(ACTION_SCREENSHOT, 2))
+            builder.addAction(0, if (recording) "⏹ Stop" else "⏺ Record", action(ACTION_RECORD, 3))
         }
         return builder.build()
     }

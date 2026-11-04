@@ -80,7 +80,7 @@ object Shell {
         // Binder Shizuku přichází asynchronně po startu procesu, chvíli počkáme
         var tries = 0
         while (state() != State.READY) {
-            if (++tries > 20) throw IllegalStateException("Shizuku neběží nebo appka nemá oprávnění")
+            if (++tries > 20) throw IllegalStateException("Shizuku isn't running or the app has no permission")
             delay(250)
         }
         val pending = waiter
@@ -92,7 +92,7 @@ object Shell {
             withTimeout(10_000) { pending.await() }
         } catch (e: TimeoutCancellationException) {
             binding = false
-            throw IllegalStateException("Nepodařilo se připojit ke Shizuku službě")
+            throw IllegalStateException("Couldn't connect to the Shizuku service")
         }
     }
 
@@ -103,7 +103,7 @@ object Shell {
             s.exec(cmd) ?: ""
         } catch (e: RemoteException) {
             reset()
-            throw IllegalStateException("Spojení se Shizuku spadlo")
+            throw IllegalStateException("The Shizuku connection dropped")
         }
     }
 }

@@ -7,6 +7,8 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Environment
+import android.os.StatFs
 import android.view.Display
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -65,6 +67,107 @@ object BoostEngine {
         "com.skype.raider",
         "com.microsoft.teams",
     )
+
+    /**
+     * Doporučené výjimky: zprávy, hovory, hudba a hodinky. Ukončená appka do dalšího otevření
+     * nedostává oznámení – bez těchhle výjimek by po hře nechodily zprávy.
+     */
+    val DEFAULT_KEEP = listOf(
+        "com.discord", "com.whatsapp", "com.whatsapp.w4b", "com.facebook.orca", "org.telegram.messenger",
+        "org.thoughtcrime.securesms", "com.viber.voip", "com.snapchat.android", "com.instagram.android",
+        "com.microsoft.teams", "com.skype.raider", "com.spotify.music", "com.google.android.apps.youtube.music",
+        "deezer.android.app", "com.xiaomi.wearable", "com.mi.health", "com.huami.watch.hmwatchmanager",
+        "com.google.android.apps.wearables.maestro.companion", "com.google.android.wearable.app",
+        "com.samsung.android.app.watchmanager", "com.garmin.android.apps.connectmobile",
+    )
+
+    @Volatile var lastKilled = 0
+        private set
+
+    /** Appka nainstalovaná uživatelem (ne systémová ani aktualizovaná systémová). */
+    private fun isUserApp(ctx: Context, pkg: String): Boolean = runCatching {
+        val f = ctx.packageManager.getApplicationInfo(pkg, 0).flags
+        (f and android.content.pm.ApplicationInfo.FLAG_SYSTEM) == 0 &&
+            (f and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+    }.getOrDefault(false)
+
+    /**
+     * Co se při spuštění hry ukončí. V režimu „vše kromě výjimek“: všechny běžící uživatelské appky
+     * kromě výjimek a kromě toho, co nesmí spadnout – launcher, klávesnice, služby usnadnění,
+     * appky čtoucí oznámení (hodinky), trvalá VPN, živá tapeta, hlasové appky, hra, Shizuku, ZukuBoost.
+     */
+    /** Výsledek analýzy pozadí: co běželo, co se ukončí (s pamětí v MB), kolik zůstane. */
+    data class BgAnalysis(val running: Int, val killed: List<Pair<String, Int>>, val kept: Int) {
+        val killedMb: Int get() = killed.sumOf { it.second }
+    }
+
+    @Volatile var lastAnalysis: BgAnalysis? = null
+        private set
+
+    suspend fun killTargets(ctx: Context, pkg: String?): List<String> {
+        val p = Prefs(ctx)
+        val base = setOfNotNull(pkg, ctx.packageName, SHIZUKU_PKG)
+
+        // Jedním voláním: kritické appky (klávesnice, usnadnění, čtení oznámení, VPN) + běžící procesy s pamětí
+        val out = Shell.exec(
+            "echo \"IME=\$(settings get secure default_input_method)\"; " +
+                "echo \"A11Y=\$(settings get secure enabled_accessibility_services)\"; " +
+                "echo \"NL=\$(settings get secure enabled_notification_listeners)\"; " +
+                "echo \"VPN=\$(settings get secure always_on_vpn_app)\"; " +
+                "echo '@@PS'; ps -A -o RSS,NAME"
+        )
+        val kv = parseKv(out.substringBefore("@@PS"))
+        val critical = mutableSetOf<String>()
+        listOf("IME", "A11Y", "NL", "VPN").forEach { k ->
+            kv[k]?.split(':', ',')?.map { it.substringBefore('/').trim() }?.filter { PKG_RE.matches(it) }?.let { critical += it }
+        }
+        runCatching {
+            ctx.packageManager.resolveActivity(
+                android.content.Intent(android.content.Intent.ACTION_MAIN).addCategory(android.content.Intent.CATEGORY_HOME),
+                PackageManager.MATCH_DEFAULT_ONLY,
+            )?.activityInfo?.packageName
+        }.getOrNull()?.let { critical += it }
+        runCatching { android.app.WallpaperManager.getInstance(ctx).wallpaperInfo?.packageName }.getOrNull()?.let { critical += it }
+        if (p.opt(Opt.PROTECT_VOICE)) critical += VOICE_APPS
+
+        // Paměť (RSS v kB) sečtená za všechny procesy jedné appky
+        val memKb = mutableMapOf<String, Long>()
+        out.substringAfter("@@PS").lines().forEach { line ->
+            val parts = line.trim().split(Regex("\\s+"))
+            if (parts.size >= 2) {
+                val kb = parts[0].toLongOrNull() ?: return@forEach
+                val name = parts[1].substringBefore(':')
+                if (PKG_RE.matches(name) && name.contains('.')) memKb[name] = (memKb[name] ?: 0L) + kb
+            }
+        }
+        val userRunning = memKb.keys.filter { it !in base && isUserApp(ctx, it) }
+
+        val targets = if (p.killMode == 0) {
+            safe(p.killList - base)
+        } else {
+            userRunning.filter { it !in p.keepList && it !in critical }
+        }
+        val killedWithMem = targets.filter { it in memKb }
+            .map { it to ((memKb[it] ?: 0L) / 1024).toInt() }
+            .sortedByDescending { it.second }
+        lastAnalysis = BgAnalysis(userRunning.size, killedWithMem, (userRunning - targets.toSet()).size)
+        return targets
+    }
+
+    /** Čitelný název appky. */
+    fun appLabel(ctx: Context, pkg: String): String = runCatching {
+        ctx.packageManager.getApplicationLabel(ctx.packageManager.getApplicationInfo(pkg, 0)).toString()
+    }.getOrDefault(pkg)
+
+    /** Shrnutí analýzy pro animaci a notifikaci, např. „ukončeno 9 appek (~1,2 GB): TikTok, Chrome, Facebook“. */
+    fun analysisSummary(ctx: Context): String {
+        val a = lastAnalysis ?: return ""
+        if (a.killed.isEmpty()) return "Nothing unnecessary is running in the background"
+        val mb = a.killedMb
+        val size = if (mb >= 1024) String.format(Locale.US, "~%.1f GB", mb / 1024f) else "~$mb MB"
+        val top = a.killed.take(3).joinToString(", ") { appLabel(ctx, it.first) }
+        return "Closed ${a.killed.size} apps ($size): $top" + if (a.killed.size > 3) "…" else ""
+    }
 
     private fun isInstalled(ctx: Context, pkg: String) =
         runCatching { ctx.packageManager.getApplicationInfo(pkg, 0) }.isSuccess
@@ -175,6 +278,9 @@ object BoostEngine {
 
     /** Bez limitu nejvyšší Hz, s limitem nejvyšší Hz, které jsou jeho násobkem (rovnoměrné snímky). */
     private fun targetHz(ctx: Context, cap: Int): Float {
+        // Ruční volba má přednost (i když ji systém v seznamu režimů nehlásí)
+        val manual = Prefs(ctx).hzMode
+        if (manual > 0) return manual.toFloat()
         val rates = refreshRates(ctx)
         val max = rates.maxOrNull() ?: 60f
         if (cap <= 0) return max
@@ -258,6 +364,18 @@ object BoostEngine {
                     },
                 )
             }
+            // Vynucení preferovaného režimu displeje (rozlišení + Hz) přes DisplayManager
+            if (p.opt(Opt.FORCE_MODE) && Build.VERSION.SDK_INT >= 31) {
+                val mode = ctx.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)?.mode
+                if (mode != null) {
+                    if (p.userModeBackup == null) {
+                        val cur = Shell.exec("cmd display get-user-preferred-display-mode 2>&1").trim()
+                        val nums = Regex("[0-9]+(\\.[0-9]+)?").findAll(cur).map { it.value }.toList()
+                        p.userModeBackup = if (nums.size >= 3 && !cur.contains("null", true)) nums.take(3).joinToString(" ") else "none"
+                    }
+                    cmds += "cmd display set-user-preferred-display-mode ${mode.physicalWidth} ${mode.physicalHeight} $asFloat"
+                }
+            }
         }
         if (p.opt(Opt.ANIMATIONS)) ANIMS.forEach { cmds += put(it, "0") }
         if (p.opt(Opt.BATTERY_SAVER)) cmds += "cmd power set-mode 0"
@@ -302,7 +420,7 @@ object BoostEngine {
             // Seznam Xiaomi měníme jen když mu rozumíme – jinak by ho po hře nešlo přesně vrátit
             if (empty || VALUE_RE.matches(orig!!)) {
                 val base = if (empty) emptyList() else orig!!.split(",").filter { it.isNotBlank() }
-                val voice = VOICE_APPS.filter { it !in p.killList && isInstalled(ctx, it) }
+                val voice = VOICE_APPS.filter { (p.killMode == 1 || it !in p.killList) && isInstalled(ctx, it) }
                 val added = (listOf(pkg) + voice).filter { PKG_RE.matches(it) && it !in base }
                 if (added.isNotEmpty()) cmds += put(MILLET, (base + added).joinToString(","))
             }
@@ -317,7 +435,9 @@ object BoostEngine {
             cmds += "cmd power set-fixed-performance-mode-enabled true"
         }
         if (p.opt(Opt.SYSTEM_HOGS)) {
-            SYSTEM_HOGS.filter { it != pkg }.forEach { cmds += "am force-stop $it 2>/dev/null" }
+            (SYSTEM_HOGS + DeviceDetector.vendorHogs(DeviceDetector.quickBrand()))
+                .filter { it != pkg }
+                .forEach { cmds += "am force-stop $it 2>/dev/null" }
             cmds += "cmd package cancel-bg-dexopt-job 2>/dev/null"
             cmds += "pm art cancel-bg-dexopt-job 2>/dev/null" // Android 14+ (ART Service)
         }
@@ -338,7 +458,7 @@ object BoostEngine {
 
         if (p.opt(Opt.PROTECT_VOICE)) {
             // Hlasové appky + samotná hra: systém je během hraní neuspí ani neomezí
-            val targets = (VOICE_APPS.filter { it != pkg && it !in p.killList && isInstalled(ctx, it) } + pkg).distinct()
+            val targets = (VOICE_APPS.filter { it != pkg && (p.killMode == 1 || it !in p.killList) && isInstalled(ctx, it) } + pkg).distinct()
             if (targets.isNotEmpty()) {
                 val whitelist = Shell.exec("dumpsys deviceidle whitelist")
                 val added = targets.filter { !whitelist.contains(it) }
@@ -349,6 +469,9 @@ object BoostEngine {
             }
         }
 
+        // Co se ukončí (a komu se odřízne internet) – spočítá se jednou
+        val killList = if (p.opt(Opt.KILL_BG) || p.opt(Opt.NET_BLOCK_BG)) runCatching { killTargets(ctx, pkg) }.getOrDefault(emptyList()) else emptyList()
+
         // Firewall přes connectivity chain 3 (stejný mechanismus jako ShizuWall), Android 11+
         if (p.opt(Opt.NET_BLOCK_BG) && Build.VERSION.SDK_INT >= 30) {
             val stores = if (p.opt(Opt.SYSTEM_HOGS)) {
@@ -357,7 +480,7 @@ object BoostEngine {
                 emptyList()
             }
             val targets = safe(
-                (p.killList + stores) - pkg - ctx.packageName - SHIZUKU_PKG - VOICE_APPS.toSet()
+                (killList + stores) - pkg - ctx.packageName - SHIZUKU_PKG - VOICE_APPS.toSet()
             ).filter { isInstalled(ctx, it) }
             if (targets.isNotEmpty()) {
                 // Uložit předem, ať se odblokují i při pádu uprostřed
@@ -370,7 +493,8 @@ object BoostEngine {
         }
 
         if (p.opt(Opt.KILL_BG)) {
-            val targets = safe(p.killList - pkg - ctx.packageName - SHIZUKU_PKG)
+            val targets = killList
+            lastKilled = targets.size
             val kill = mutableListOf<String>()
             val newlyRestricted = mutableSetOf<String>()
             if (p.opt(Opt.RESTRICT_BG) && targets.isNotEmpty()) {
@@ -411,22 +535,52 @@ object BoostEngine {
     /** Úklid těsně před spuštěním hry z domovské obrazovky – víc volné RAM při načítání. */
     suspend fun preLaunchClean(ctx: Context, pkg: String): Int {
         val p = Prefs(ctx)
-        val targets = safe(p.killList - pkg - ctx.packageName - SHIZUKU_PKG)
+        val targets = killTargets(ctx, pkg)
         val cmds = targets.map { "am force-stop $it" } + "am kill-all"
         Shell.exec(cmds.joinToString("; "))
         return targets.size
     }
 
     /** Změna Hz během hry (automatické Hz podle FPS). Originály už jsou uložené z apply(). */
-    suspend fun setSessionHz(hz: Float): String {
+    suspend fun setSessionHz(ctx: Context, hz: Float): String {
         val keys = detectHzKeys().filter { !it.endsWith("is_smart_fps") }
         val asFloat = String.format(Locale.US, "%.1f", hz)
         val asInt = hz.roundToInt().toString()
         val cmds = keys.map { id ->
             val k = key(id)
             put(id, if (k.startsWith("peak") || k.startsWith("min")) asFloat else asInt)
+        }.toMutableList()
+        // Při vynuceném režimu displeje je potřeba změnit i ten (jinak by chlazení nefungovalo)
+        if (Prefs(ctx).userModeBackup != null && Build.VERSION.SDK_INT >= 31) {
+            ctx.getSystemService(DisplayManager::class.java)?.getDisplay(Display.DEFAULT_DISPLAY)?.mode?.let { m ->
+                cmds += "cmd display set-user-preferred-display-mode ${m.physicalWidth} ${m.physicalHeight} $asFloat"
+            }
         }
         return Shell.exec(cmds.joinToString("; "))
+    }
+
+    private fun freeStorage(): Long = runCatching { StatFs(Environment.getDataDirectory().path).availableBytes }.getOrDefault(0L)
+
+    /**
+     * Čistič úložiště: mezipaměť všech aplikací (pm trim-caches – systém ji smaže sám, jako by docházelo místo),
+     * miniatury galerie (vytvoří se znovu) a systémový log. Vrací uvolněné MB.
+     */
+    suspend fun cleanStorage(): Long {
+        val before = freeStorage()
+        Shell.exec(
+            "pm trim-caches 999G 2>/dev/null; " +
+                "rm -rf /sdcard/DCIM/.thumbnails/* /sdcard/Pictures/.thumbnails/* 2>/dev/null; " +
+                "logcat -c 2>/dev/null"
+        )
+        return ((freeStorage() - before) / 1_048_576).coerceAtLeast(0)
+    }
+
+    /** Čistič RAM mimo hru: kill list + procesy v cache. Vrací počet ukončených appek z kill listu. */
+    suspend fun cleanRam(ctx: Context): Int {
+        val p = Prefs(ctx)
+        val targets = killTargets(ctx, null).filter { isInstalled(ctx, it) }
+        Shell.exec((targets.map { "am force-stop $it" } + "am kill-all").joinToString("; "))
+        return targets.size
     }
 
     /** Snímek obrazovky přes shell (screencap). Vrací cestu, nebo prázdný text při chybě. */
@@ -507,30 +661,38 @@ object BoostEngine {
     /** Kroky, které se ukážou v animaci spuštění hry (podle zapnutých voleb). */
     fun launchSteps(ctx: Context, pkg: String): List<String> {
         val p = Prefs(ctx)
-        val kill = (p.killList - pkg).count { isInstalled(ctx, it) }
+        val kill = if (p.killMode == 1) 0 else (p.killList - pkg).count { isInstalled(ctx, it) }
         val cap = p.fpsCap(pkg)
         val scale = p.scale(pkg)
         return buildList {
-            if (p.opt(Opt.KILL_BG)) add(if (kill > 0) "Ukončuji appky na pozadí ($kill)" else "Čistím procesy na pozadí")
-            add("Uvolňuji paměť RAM")
-            if (p.opt(Opt.SYSTEM_HOGS)) add("Utlumuji systémové služby a aktualizace")
-            if (p.opt(Opt.NET_BLOCK_BG)) add("Odpojuji internet appkám na pozadí")
-            if (p.opt(Opt.HIDE_NOTIF) || p.opt(Opt.DND)) {
-                add(if (p.opt(Opt.BLOCK_CALLS)) "Vypínám oznámení i hovory" else "Vypínám oznámení")
+            if (p.opt(Opt.KILL_BG)) {
+                add(
+                    when {
+                        p.killMode == 1 -> "Closing all background apps except exceptions"
+                        kill > 0 -> "Closing background apps ($kill)"
+                        else -> "Cleaning background processes"
+                    },
+                )
             }
-            if (p.opt(Opt.REFRESH)) add("Zamykám ${targetHz(ctx, cap).roundToInt()} Hz displeje")
+            add("Freeing RAM")
+            if (p.opt(Opt.SYSTEM_HOGS)) add("Throttling system services and updates")
+            if (p.opt(Opt.NET_BLOCK_BG)) add("Cutting internet for background apps")
+            if (p.opt(Opt.HIDE_NOTIF) || p.opt(Opt.DND)) {
+                add(if (p.opt(Opt.BLOCK_CALLS)) "Silencing notifications and calls" else "Silencing notifications")
+            }
+            if (p.opt(Opt.REFRESH)) add("Locking display at ${targetHz(ctx, cap).roundToInt()} Hz")
             if (cap > 0 || scale < 0.99f) {
                 val parts = buildList {
                     if (cap > 0) add("FPS $cap")
-                    if (scale < 0.99f) add("rozlišení ${(scale * 100).roundToInt()} %")
+                    if (scale < 0.99f) add("resolution ${(scale * 100).roundToInt()} %")
                 }
-                add("Profil hry: ${parts.joinToString(" · ")}")
+                add("Game profile: ${parts.joinToString(" · ")}")
             }
-            if (p.opt(Opt.GAME_MODE)) add("Game Mode: výkon")
-            if (p.opt(Opt.XIAOMI_PERF) && isXiaomi()) add("Xiaomi výkonový profil")
-            if (p.opt(Opt.BATTERY_SAVER)) add("Vypínám spořič baterie")
-            if (p.opt(Opt.PROTECT_VOICE)) add("Chráním Discord a hovory")
-            if (p.opt(Opt.SMART_COOL)) add("Chytré chlazení připraveno")
+            if (p.opt(Opt.GAME_MODE)) add("Game Mode: performance")
+            if (p.opt(Opt.XIAOMI_PERF) && isXiaomi()) add("Xiaomi performance profile")
+            if (p.opt(Opt.BATTERY_SAVER)) add("Turning off battery saver")
+            if (p.opt(Opt.PROTECT_VOICE)) add("Protecting Discord and calls")
+            if (p.opt(Opt.SMART_COOL)) add("Smart cooling ready")
         }
     }
 
@@ -575,6 +737,13 @@ object BoostEngine {
             }
         }
         if (p.thermalOverride) cmds += "cmd thermalservice reset"
+        p.userModeBackup?.let { b ->
+            cmds += if (b == "none" || b.split(" ").size < 3) {
+                "cmd display clear-user-preferred-display-mode"
+            } else {
+                "cmd display set-user-preferred-display-mode $b"
+            }
+        }
         cmds += "dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1"
         if (p.fixedPerf) cmds += "cmd power set-fixed-performance-mode-enabled false"
         p.syncModeOrig?.let { mode ->
@@ -604,14 +773,14 @@ object BoostEngine {
 
     /** AOT kompilace hry v režimu speed – rychlejší start a méně záseků v Java/Kotlin části. */
     suspend fun compileSpeed(pkg: String): String {
-        if (!PKG_RE.matches(pkg)) return "Neplatný balíček"
+        if (!PKG_RE.matches(pkg)) return "Invalid package"
         return Shell.exec("cmd package compile -m speed -f $pkg").trim()
     }
 
     /** Profil hry: render rozlišení (víc FPS, méně tepla) a FPS limit (stabilní snímky). Android 13+. */
     suspend fun setGameConfig(ctx: Context, pkg: String, scale: Float, cap: Int): String {
-        if (!PKG_RE.matches(pkg)) return "Neplatný balíček"
-        if (Build.VERSION.SDK_INT < 33) return "Potřebuje Android 13+"
+        if (!PKG_RE.matches(pkg)) return "Invalid package"
+        if (Build.VERSION.SDK_INT < 33) return "Requires Android 13+"
         val p = Prefs(ctx)
         // Záloha konfigurace od výrobce, ať ji při vypnutí vrátíme místo smazání
         if (p.gameOverlayBackup(pkg) == null) {
@@ -640,8 +809,8 @@ object BoostEngine {
         )
         return when {
             out.contains("Exception") -> out.trim()
-            on -> "Odemčeno – ZukuBoost ho obnoví při každé hře. Otevři Game Turbo u hry a hledej GPU nastavení."
-            else -> "GPU nastavení v Game Turbu skryto"
+            on -> "Unlocked – ZukuBoost re-applies it for every game. Open Game Turbo for the game and look for GPU settings."
+            else -> "Game Turbo GPU settings hidden"
         }
     }
 
@@ -656,31 +825,31 @@ object BoostEngine {
 
     private val OBSTACLES = listOf(
         Triple("settings get system show_touches", "1", Obstacle(
-            "touches", "Zobrazování dotyků", "Kreslí kolečko pod každým dotykem – zbytečná zátěž a rušení.",
+            "touches", "Show taps", "Draws a circle under every touch – needless load and distraction.",
             "settings put system show_touches 0",
         )),
         Triple("settings get system pointer_location", "1", Obstacle(
-            "pointer", "Umístění ukazatele", "Překryv se souřadnicemi dotyku – zátěž vykreslování.",
+            "pointer", "Pointer location", "Overlay with touch coordinates – adds rendering load.",
             "settings put system pointer_location 0",
         )),
         Triple("settings get global always_finish_activities", "1", Obstacle(
-            "finish", "Nezachovávat aktivity", "Hra se při každém odskočení do jiné appky zavře a načítá znovu.",
+            "finish", "Don't keep activities", "The game closes and reloads every time you switch to another app.",
             "settings put global always_finish_activities 0",
         )),
         Triple("getprop debug.egl.force_msaa", "true", Obstacle(
-            "msaa", "Vynutit 4× MSAA", "Populární „tip“, který ve hrách výrazně zatěžuje GPU a zvyšuje teplotu.",
+            "msaa", "Force 4x MSAA", "A popular “tip” that heavily loads the GPU in games and raises temperature.",
             "setprop debug.egl.force_msaa false",
         )),
         Triple("getprop debug.hwui.profile", "visual_bars", Obstacle(
-            "profile", "Profil vykreslování GPU (pruhy)", "Kreslí graf přes obrazovku – zátěž navíc.",
+            "profile", "Profile GPU rendering (bars)", "Draws a graph over the screen – extra load.",
             "setprop debug.hwui.profile false",
         )),
         Triple("getprop debug.hwui.overdraw", "show", Obstacle(
-            "overdraw", "Ladit překreslování GPU", "Obarvuje obraz a zpomaluje vykreslování.",
+            "overdraw", "Debug GPU overdraw", "Tints the image and slows rendering.",
             "setprop debug.hwui.overdraw false",
         )),
         Triple("getprop debug.layout", "true", Obstacle(
-            "layout", "Zobrazit hranice rozvržení", "Kreslí rámečky kolem všech prvků – zpomaluje UI.",
+            "layout", "Show layout bounds", "Draws boxes around every element – slows the UI.",
             "setprop debug.layout false",
         )),
     )
@@ -694,9 +863,9 @@ object BoostEngine {
 
     /** Opraví všechny nalezené překážky; běžící appky si debug vlastnosti načtou znovu. */
     suspend fun fixObstacles(list: List<Obstacle>): String {
-        if (list.isEmpty()) return "Nic k opravě"
+        if (list.isEmpty()) return "Nothing to fix"
         Shell.exec((list.map { it.fix } + "service call activity 1599295570 >/dev/null 2>&1").joinToString("; "))
-        return "Opraveno: ${list.joinToString { it.title }}. Hru spusť znovu."
+        return "Fixed: ${list.joinToString { it.title }}. Restart the game."
     }
 
     /** Zmrazování appek v cache: appky na pozadí nebrání hře v CPU. */
@@ -724,9 +893,9 @@ object BoostEngine {
         if (out.contains("Exception")) return out.trim()
         val info = freezerState()
         return when {
-            on && info.active == true -> "Zmrazování běží ✅"
-            on -> "Uloženo. Android ho zapíná při startu – po restartu ho ZukuBoost znovu nastaví sám."
-            else -> "Vráceno na výchozí systému"
+            on && info.active == true -> "Freezer is running ✅"
+            on -> "Saved. Android enables it at boot – after a restart ZukuBoost sets it again automatically."
+            else -> "Reset to system default"
         }
     }
 
@@ -741,13 +910,14 @@ object BoostEngine {
         val p = Prefs(ctx)
         val game = pkg?.takeIf { PKG_RE.matches(it) }
         val script = buildList {
-            add("echo '== Displej =='")
-            add("echo \"Režimy: \$(dumpsys display | grep -oE 'fps=[0-9.]+' | sort -u | tr '\\n' ' ')\"")
+            add("echo '== Display =='")
+            add("echo \"Modes: \$(dumpsys display | grep -oE 'fps=[0-9.]+' | sort -u | tr '\\n' ' ')\"")
+            add("echo \"preferred mode: \$(cmd display get-user-preferred-display-mode 2>&1 | head -1)\"")
             add("echo \"peak=\$(settings get system peak_refresh_rate) min=\$(settings get system min_refresh_rate) user=\$(settings get secure user_refresh_rate) miui=\$(settings get system miui_refresh_rate)\"")
             add("dumpsys display | grep -m 4 -E 'mActiveMode|renderFrameRate|mActiveRefreshRate|refreshRate='")
             add("echo; echo '== Thermal =='")
             add("dumpsys thermalservice | grep -m 3 -E 'IsStatusOverride|Thermal Status'")
-            add("echo; echo '== Výkon =='")
+            add("echo; echo '== Performance =='")
             add("dumpsys power | grep -m 3 -E 'mLowPowerModeEnabled|mBatterySaverEnabled'")
             add("echo \"power_mode=\$(settings get system power_mode) speed_mode=\$(settings get system speed_mode)\"")
             add("echo \"freezer=\$(settings get global cached_apps_freezer) sync=\$(device_config get_sync_disabled_for_tests)\"")
@@ -758,12 +928,12 @@ object BoostEngine {
                 add("cmd game list-configs $game 2>&1 | head -5")
                 add("echo \"game_overlay=\$(device_config get game_overlay $game)\"")
                 if (isXiaomi()) {
-                    add("settings get system MILLET_NO_RESTRICT_APP | grep -q $game && echo 'Bez omezení (Millet): ANO' || echo 'Bez omezení (Millet): ne'")
+                    add("settings get system MILLET_NO_RESTRICT_APP | grep -q $game && echo 'No restrictions (Millet): YES' || echo 'No restrictions (Millet): no'")
                 }
             }
         }.joinToString("; ")
         val out = Shell.exec(script).trim()
-        val boost = if (p.boostActive) "Boost: AKTIVNÍ" else "Boost: neaktivní (hra neběží)"
+        val boost = if (p.boostActive) "Boost: ACTIVE" else "Boost: inactive (no game running)"
         return "$boost\n\n$out".take(4000)
     }
 
@@ -778,7 +948,7 @@ object BoostEngine {
 
     /** Přepne hru na herní GPU ovladač (projeví se po restartu hry). */
     suspend fun setGameDriver(pkg: String, on: Boolean): String {
-        if (!PKG_RE.matches(pkg)) return "Neplatný balíček"
+        if (!PKG_RE.matches(pkg)) return "Invalid package"
         val list = gameDriverApps().toMutableSet()
         if (on) list += pkg else list -= pkg
         val value = list.joinToString(",")
@@ -787,8 +957,8 @@ object BoostEngine {
         )
         return when {
             out.contains("Exception") -> out.trim()
-            on -> "Herní GPU ovladač zapnutý – restartuj hru"
-            else -> "Výchozí GPU ovladač – restartuj hru"
+            on -> "Game GPU driver enabled – restart the game"
+            else -> "Default GPU driver – restart the game"
         }
     }
 
@@ -814,15 +984,15 @@ object BoostEngine {
     suspend fun setJoyose(enabled: Boolean): String {
         if (enabled) {
             val out = Shell.exec("cmd package install-existing --user 0 $JOYOSE; pm enable $JOYOSE")
-            return if (out.contains("Exception")) out.trim() else "Joyose je zpět zapnutý"
+            return if (out.contains("Exception")) out.trim() else "Joyose is enabled again"
         }
         val first = Shell.exec("am force-stop $JOYOSE; pm disable-user --user 0 $JOYOSE")
-        if (!first.contains("Exception")) return "Joyose vypnutý"
+        if (!first.contains("Exception")) return "Joyose disabled"
         val second = Shell.exec("am force-stop $JOYOSE; pm uninstall -k --user 0 $JOYOSE")
         return if (second.contains("Success")) {
-            "Joyose odebrán pro tvého uživatele. Vrátíš ho tlačítkem Zapnout Joyose zpět."
+            "Joyose removed for your user. Bring it back with the Re-enable Joyose button."
         } else {
-            "Nepodařilo se: ${second.trim()}"
+            "Failed: ${second.trim()}"
         }
     }
 
@@ -844,7 +1014,7 @@ object BoostEngine {
     /** Otevře skrytý výběr výkonového režimu Xiaomi (pokud ho firmware má). */
     suspend fun openXiaomiPowerMenu(): String {
         val out = Shell.exec("am start -n com.android.settings/com.android.settings.fuelgauge.PowerModeSettings")
-        return if (out.contains("Error") || out.contains("Exception")) "Tenhle firmware skryté menu nemá" else "Otevřeno"
+        return if (out.contains("Error") || out.contains("Exception")) "This firmware doesn't have the hidden menu" else "Opened"
     }
 
     /** Udělí appce přes Shizuku všechna oprávnění, která potřebuje. Vrací výsledek včetně chyb systému. */
@@ -874,9 +1044,9 @@ object BoostEngine {
             it.contains("Exception") || it.startsWith("Error") || it.contains("not allowed", ignoreCase = true)
         }
         return if (errors.isEmpty()) {
-            "Oprávnění nastavena"
+            "Permissions granted"
         } else {
-            "Systém část odmítl: ${errors.first().take(140)} – povol to ručně tlačítky níž"
+            "The system refused part of it: ${errors.first().take(140)} – grant it manually with the buttons below"
         }
     }
 }

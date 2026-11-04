@@ -38,7 +38,7 @@ class ShellService : IShellService.Stub() {
             if (!finished) process.destroyForcibly()
             reader.join(2_000)
             val text = synchronized(output) { output.toString() }
-            if (finished) text else "$text\nERROR: příkaz překročil ${TIMEOUT_S}s a byl ukončen"
+            if (finished) text else "$text\nERROR: command exceeded ${TIMEOUT_S}s and was terminated"
         } catch (t: Throwable) {
             "ERROR: ${t.message}"
         }
