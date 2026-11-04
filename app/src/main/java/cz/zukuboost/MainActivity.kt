@@ -292,7 +292,7 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
             prefs.setOpt(o, v)
         }
         prefs.coolStartC = rec.coolStartC
-        setKillMode(rec.killMode)
+        changeKillMode(rec.killMode)
         if (rec.killMode == 1) ensureDefaultKeep()
         prefs.deviceApplied = true
         recheck++
@@ -304,7 +304,7 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
         prefs.keepList = v
     }
 
-    fun setKillMode(mode: Int) {
+    fun changeKillMode(mode: Int) {
         killMode = mode
         prefs.killMode = mode
     }

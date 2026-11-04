@@ -498,7 +498,7 @@ fun KillListScreen(s: UiState) {
                                 .background(if (sel) NeonRed.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.04f))
                                 .border(1.dp, if (sel) NeonRed else Color.White.copy(alpha = 0.12f), ChamferShape(9.dp))
                                 .clickable {
-                                    s.setKillMode(mode)
+                                    s.changeKillMode(mode)
                                     if (mode == 1) s.ensureDefaultKeep()
                                 }
                                 .padding(vertical = 11.dp),
