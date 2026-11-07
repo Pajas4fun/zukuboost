@@ -112,13 +112,6 @@ enum class Opt(val key: String, val title: String, val desc: String, val default
             "3 °C higher to 60 Hz and brightness −15 %. 3 °C below the limit everything is restored. Set the limit below. Also warns when you play while charging.",
         true,
     ),
-    AUTO_HZ(
-        "opt_autohz",
-        "Hz matched to the game's real FPS",
-        "After a minute of play, measures the game's real FPS and lowers display Hz to the nearest higher value (e.g. a 60 FPS game → 60 Hz). " +
-            "Less heat and more even frames – like RedMagic's Touch Choreographer or ASUS ROG's advice. A 90 FPS game on a 120 Hz display otherwise judders (frames aren't evenly paced). Lobby and loading aren't counted, and when the game wants more, Hz goes back up. Only without an FPS cap.",
-        true,
-    ),
     EDGE_BLOCK(
         "opt_edge",
         "Block touches at the edges",
@@ -147,6 +140,9 @@ data class Session(
     val drops: Int,
     val maxCpu: Float?,
     val maxBat: Float?,
+    val avgPing: Int? = null,
+    val maxPing: Int? = null,
+    val batUsed: Int? = null,
 )
 
 class Prefs(ctx: Context) {
@@ -434,6 +430,9 @@ class Prefs(ctx: Context) {
                 drops = o.optInt("drops", 0),
                 maxCpu = if (o.has("cpu")) o.getDouble("cpu").toFloat() else null,
                 maxBat = if (o.has("bat")) o.getDouble("bat").toFloat() else null,
+                avgPing = if (o.has("ping")) o.getInt("ping") else null,
+                maxPing = if (o.has("pingmax")) o.getInt("pingmax") else null,
+                batUsed = if (o.has("batused")) o.getInt("batused") else null,
             )
         }
     }.getOrDefault(emptyList())
@@ -452,6 +451,9 @@ class Prefs(ctx: Context) {
             o.put("drops", h.drops)
             h.maxCpu?.let { o.put("cpu", it.toDouble()) }
             h.maxBat?.let { o.put("bat", it.toDouble()) }
+            h.avgPing?.let { o.put("ping", it) }
+            h.maxPing?.let { o.put("pingmax", it) }
+            h.batUsed?.let { o.put("batused", it) }
             arr.put(o)
         }
         sp.edit().putString("history", arr.toString()).apply()

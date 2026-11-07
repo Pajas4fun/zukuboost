@@ -12,8 +12,8 @@ android {
         applicationId = "cz.zukuboost"
         minSdk = 26
         targetSdk = 35
-        versionCode = 36
-        versionName = "5.3.2"
+        versionCode = 38
+        versionName = "5.5"
     }
 
     // Pevný klíč v repu = každý build z GitHub Actions jde nainstalovat přes předchozí verzi

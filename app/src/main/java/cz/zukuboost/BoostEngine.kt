@@ -799,6 +799,45 @@ object BoostEngine {
         return Shell.exec(gameConfigCmd(pkg, scale, cap)).trim()
     }
 
+    /**
+     * Odstraní všechno, co v ZukuBoostu může držet hru pod maximem Hz:
+     * ruční Hz = maximum displeje, zámek Hz zapnutý, FPS limity her zrušené (Game Mode bez fps=),
+     * stabilní takty vypnuté a na Xiaomi zapnutý Joyose (bez něj HyperOS hry nad 90 FPS nepustí).
+     */
+    suspend fun unlockMaxHz(ctx: Context): String {
+        val p = Prefs(ctx)
+        val changes = mutableListOf<String>()
+        val max = (detectDisplayRates(ctx).maxOrNull() ?: refreshRates(ctx).maxOrNull() ?: 120f).roundToInt()
+        val target = if (max < 120) 120 else max
+        if (p.hzMode != target) {
+            p.hzMode = target
+            changes += "refresh rate set to $target Hz"
+        }
+        if (!p.opt(Opt.REFRESH)) {
+            p.setOpt(Opt.REFRESH, true)
+            changes += "Hz lock on"
+        }
+        if (p.opt(Opt.FIXED_PERF)) {
+            p.setOpt(Opt.FIXED_PERF, false)
+            changes += "stable clocks off"
+        }
+        val capped = p.games.filter { p.fpsCap(it) > 0 }
+        capped.forEach { g ->
+            p.setFpsCap(g, 0)
+            runCatching { setGameConfig(ctx, g, p.scale(g), 0) }
+        }
+        if (capped.isNotEmpty()) changes += "FPS caps removed (${capped.size})"
+        if (isXiaomi() && joyoseState(ctx) == false) {
+            runCatching { setJoyose(true) }
+            changes += "Joyose re-enabled"
+        }
+        return if (changes.isEmpty()) {
+            "Nothing in ZukuBoost limits Hz – if the game stays at 90, check the game's own FPS setting"
+        } else {
+            "Unlocked: " + changes.joinToString(", ") + ". Restart the game."
+        }
+    }
+
     /** Skryté GPU nastavení v Xiaomi Game Turbu (Xiaomi ho vypíná vzdálenou konfigurací). */
     suspend fun gpuTunerEnabled(): Boolean = Shell.exec("settings get global GPUTUNER_SWITCH").trim() == "true"
 

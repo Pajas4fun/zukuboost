@@ -591,6 +591,16 @@ fun HistoryScreen(s: UiState, tick: Int) {
                     color = TextDim,
                     fontSize = 12.sp,
                 )
+                val extra = buildList {
+                    h.avgPing?.let { add("Ping ø $it ms" + (h.maxPing?.let { m -> ", max $m ms" } ?: "")) }
+                    h.batUsed?.let { used ->
+                        val perHour = if (h.minutes >= 5) " (${(used * 60 / h.minutes).toInt()} %/h)" else ""
+                        add("Battery −$used %$perHour")
+                    }
+                }
+                if (extra.isNotEmpty()) {
+                    Text(extra.joinToString("   ·   "), color = TextDim, fontSize = 12.sp)
+                }
             }
         }
     }
@@ -861,6 +871,21 @@ fun SettingsScreen(s: UiState, shizuku: Shell.State, tick: Int, onRequestShizuku
         // ---------- Systém ----------
         item { SectionHeader("System") }
         item {
+            NeonCard(title = "Command log", accent = NeonYellow) {
+                val all = CmdLog.all()
+                Text(
+                    "Every command ZukuBoost sends through Shizuku and what the system answered. " +
+                        "⚠ = the system refused or didn't know the command – that's why a tweak may not work on your phone.",
+                    color = TextDim,
+                    fontSize = 12.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text("${all.size} commands · ${all.count { it.warning }} refused", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(10.dp))
+                NeonButton("Open command log", { s.showLog = true }, color = NeonYellow, outlined = true)
+            }
+        }
+        item {
             val list = s.obstacles
             NeonCard(title = "Gaming obstacles", accent = if (list.isNullOrEmpty()) NeonGreen else NeonYellow) {
                 Text(
@@ -1124,10 +1149,26 @@ fun HzChooser(s: UiState) {
         }
         Text(
             "“?” = the system doesn't report this mode – it may work anyway. Applies from the next game launch. " +
-                "Smart cooling may temporarily lower Hz when hot.",
+                "With a manual Hz choice, smart cooling never lowers Hz (it only dims brightness).",
             style = MaterialTheme.typography.bodySmall,
             color = TextDim,
             modifier = Modifier.padding(top = 6.dp),
+        )
+        Spacer(Modifier.height(10.dp))
+        NeonButton(
+            "Unlock ${maxOf(120, s.maxHz)} Hz",
+            {
+                s.runTask("Removing everything that limits Hz…") {
+                    val msg = BoostEngine.unlockMaxHz(s.ctx)
+                    mode = s.prefs.hzMode
+                    s.opts[Opt.REFRESH] = s.prefs.opt(Opt.REFRESH)
+                    s.opts[Opt.FIXED_PERF] = s.prefs.opt(Opt.FIXED_PERF)
+                    s.caps.clear()
+                    msg
+                }
+            },
+            enabled = s.busy == null,
+            color = NeonPurple,
         )
     }
 }

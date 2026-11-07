@@ -140,11 +140,9 @@ object DeviceDetector {
         // Displej
         if (d.maxHz >= 90) {
             o[Opt.REFRESH] = true
-            o[Opt.AUTO_HZ] = true
-            tips += "${d.maxHz} Hz display: Hz lock and Hz matched to real FPS (evenly paced frames)."
+            tips += "${d.maxHz} Hz display: the game gets the full ${d.maxHz} Hz – nothing lowers it."
         } else {
             o[Opt.REFRESH] = false
-            o[Opt.AUTO_HZ] = false
             tips += "60 Hz display: an Hz lock makes no sense, turned off."
         }
 

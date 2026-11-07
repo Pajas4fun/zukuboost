@@ -214,6 +214,23 @@ fun batteryTemp(ctx: Context): Float {
 
 /** Statistiky herní relace: ø/min FPS, počet propadů, max. teploty. */
 class SessionStats {
+    private var pingCount = 0
+    private var pingSum = 0L
+    private var pingMax = 0
+
+    @Synchronized
+    fun addPing(ms: Int) {
+        pingCount++
+        pingSum += ms
+        if (ms > pingMax) pingMax = ms
+    }
+
+    val avgPing: Int?
+        @Synchronized get() = if (pingCount == 0) null else (pingSum / pingCount).toInt()
+
+    val maxPing: Int?
+        @Synchronized get() = if (pingCount == 0) null else pingMax
+
     private var count = 0
     private var sum = 0L
     private var minFps = Int.MAX_VALUE
@@ -245,6 +262,9 @@ class SessionStats {
 
     @Synchronized
     fun reset() {
+        pingCount = 0
+        pingSum = 0L
+        pingMax = 0
         count = 0
         sum = 0L
         minFps = Int.MAX_VALUE
@@ -303,7 +323,8 @@ class Stats(private val ctx: Context) {
                     "echo '@@GPU'; cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage 2>/dev/null || " +
                     "cat /sys/kernel/ged/hal/gpu_utilization 2>/dev/null || cat /sys/class/misc/mali0/device/utilization 2>/dev/null; " +
                     "echo '@@CUR'; cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null; " +
-                    "echo '@@MAX'; cat /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq 2>/dev/null; echo '@@END'"
+                    "echo '@@MAX'; cat /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq 2>/dev/null; echo '@@END'",
+                log = false,
             )
         }.getOrNull() ?: return
 
@@ -344,7 +365,7 @@ class Stats(private val ctx: Context) {
         maxGhz = section("MAX").lines().mapNotNull { it.trim().toLongOrNull() }.maxOrNull()?.let { it / 1_000_000f }
     }
 
-    suspend fun format(fps: Int?, session: SessionStats, elapsedMs: Long): String {
+    suspend fun format(fps: Int?, session: SessionStats, elapsedMs: Long, ping: Int? = null): String {
         if (tick++ % 4 == 0) readSensors()
         val battery = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val batTemp = (battery?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
@@ -382,6 +403,7 @@ class Stats(private val ctx: Context) {
             }
             if (load.isNotEmpty()) append(load.joinToString("  ")).append('\n')
             append(String.format(Locale.US, "⏱ %d:%02d", sec / 60, sec % 60))
+            if (ping != null) append("   Ping ").append(ping).append(" ms")
         }
     }
 
@@ -406,5 +428,20 @@ class Stats(private val ctx: Context) {
         5 -> "emergency"
         6 -> "shutdown"
         else -> ""
+    }
+}
+
+
+/**
+ * Ping bez rootu: doba navázání TCP spojení (SYN → SYN-ACK) na 1.1.1.1:443 ≈ odezva sítě.
+ * Ukazuje kvalitu Wi-Fi / mobilních dat a výkyvy; server hry může být jinde, ale skoky pingu se projeví i tady.
+ */
+object PingMeter {
+    suspend fun measure(): Int? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        runCatching {
+            val t0 = System.nanoTime()
+            java.net.Socket().use { it.connect(java.net.InetSocketAddress("1.1.1.1", 443), 1_500) }
+            ((System.nanoTime() - t0) / 1_000_000).toInt()
+        }.getOrNull()
     }
 }

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- zkosený plazmový štít v bezpečné zóně (66 dp uprostřed) -->
+    <path android:fillColor="#FF3D6E" android:pathData="M40,30h38v38l-10,10h-38v-38z" />
+    <!-- blesk -->
+    <path android:fillColor="#FFFFFF" android:pathData="M58,35L43,57h10l-4,16l16,-23h-10l3,-15z" />
+</vector>

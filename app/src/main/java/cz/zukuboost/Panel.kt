@@ -41,6 +41,7 @@ data class PanelData(
     val bat: Float,
     val history: List<Int>,
     val measuring: Boolean,
+    val ping: Int? = null,
 )
 
 /**
@@ -534,7 +535,7 @@ class GamePanelController(private val ctx: Context, private val listener: Listen
             )
             spark.data = d.history
             statLine.text = if (d.measuring) {
-                "ø ${d.avg ?: "--"}   ·   min ${d.min ?: "--"}   ·   ⚠ drops ${d.drops}"
+                "ø ${d.avg ?: "--"}   ·   min ${d.min ?: "--"}   ·   ⚠ drops ${d.drops}" + (d.ping?.let { "   ·   ping $it ms" } ?: "")
             } else {
                 "Turn on 📊 Overlay for live FPS"
             }

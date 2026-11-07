@@ -54,6 +54,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -254,7 +256,6 @@ fun optIcon(o: Opt): String = when (o) {
     Opt.FIXED_PERF -> "📏"
     Opt.THERMAL -> "🌡️"
     Opt.SMART_COOL -> "🧊"
-    Opt.AUTO_HZ -> "🎯"
     Opt.EDGE_BLOCK -> "🖐"
     Opt.ANIMATIONS -> "✨"
     Opt.MEASURE -> "📊"
@@ -324,6 +325,7 @@ fun NeonButton(
     color: Color = NeonRed,
     outlined: Boolean = false,
 ) {
+    val haptic = LocalHapticFeedback.current
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.96f else 1f, tween(110), label = "press")
@@ -335,7 +337,10 @@ fun NeonButton(
     }
     Box(
         styled
-            .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick)
+            .clickable(interactionSource = source, indication = null, enabled = enabled) {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
             .padding(horizontal = 20.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -358,6 +363,7 @@ fun NeonButton(
 /** Šikmé tlačítko ▶▶ Spustit hru: plná plazma, běžící diagonální pruhy a záře pod ním. */
 @Composable
 fun LaunchButton(enabled: Boolean, onClick: () -> Unit) {
+    val haptic = LocalHapticFeedback.current
     val transition = rememberInfiniteTransition(label = "launch")
     val stripe by transition.animateFloat(
         initialValue = 0f,
@@ -409,7 +415,10 @@ fun LaunchButton(enabled: Boolean, onClick: () -> Unit) {
                         }
                     }
                 }
-                .clickable(interactionSource = source, indication = null, enabled = enabled, onClick = onClick),
+                .clickable(interactionSource = source, indication = null, enabled = enabled) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onClick()
+                },
             contentAlignment = Alignment.Center,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

@@ -1,4 +1,4 @@
-# ⚡ ZukuBoost 5.3
+# ⚡ ZukuBoost 5.5
 
 A game booster for Android that runs through **Shizuku / Shizuku Next** – no root required.
 Built to beat stock game modes like HyperOS Game Turbo: it does more, shows you what it does,
@@ -15,15 +15,17 @@ and puts everything back when you stop playing.
 - System hogs throttled (Play Store / GetApps updates, Xiaomi analytics & ads, gallery scanning, Mi Connect,
   Samsung Bixby / Galaxy Store, HeyTap, vivo store…), background dexopt cancelled, account sync paused
 - **Notifications hidden completely** (Do Not Disturb policy), optional call blocking, no heads-up banners
-- **Display**: Hz lock, Hz matched to the game's real FPS (90 FPS → 90 Hz for even frame pacing),
-  manual Hz choice (Auto / 60 / 90 / 120 / 144), optional forced display mode, Xiaomi smart-FPS off
+- **Display**: Hz lock, manual Hz choice (Auto / 60 / 90 / 120 / 144), optional forced display mode,
+  Xiaomi smart-FPS off, and a one-tap **Unlock 120 Hz** that removes everything in ZukuBoost that could hold
+  a game below the display maximum (FPS caps, stable clocks, disabled Joyose)
 - Battery saver off, Android Game Mode *performance*, per-game FPS cap and render resolution
   (`device_config game_overlay` + `cmd game set`), optional game GPU driver per game
 - Xiaomi: HyperOS performance profile, `MILLET_NO_RESTRICT_APP` (game and voice apps aren't frozen),
   Game Turbo hidden GPU settings unlock, Joyose control
 - Wi-Fi / Bluetooth background scanning off, optional quiet network mode and location off
 - **Smart cooling**: when the battery stays above the limit (default 44 °C, tuned per chip), Hz steps down,
-  then 60 Hz and −15 % brightness; restored when it cools down. Warns when playing while charging
+  then 60 Hz and −15 % brightness; restored when it cools down. With a manual Hz choice it never lowers Hz,
+  only dims brightness. Warns when playing while charging
 
 Everything is restored automatically when you leave the game (or when the screen turns off).
 
@@ -38,9 +40,17 @@ for that phone on first start (Settings → Your phone).
   touch lock
 - **Overlay**: FPS, drops, CPU / GPU / battery temperature, power draw, RAM, CPU load and clocks
   (current / max – you can see throttling), GPU load (Adreno, MediaTek, Mali)
-- **History** of every session: average FPS, minimum, drops, max temperatures
+- **Ping** (TCP round trip to 1.1.1.1) in the overlay and panel – shows Wi-Fi / mobile data spikes
+- **History** of every session: average FPS, minimum, drops, max temperatures, average / max ping,
+  battery used (and %/h)
+- Notification actions while playing: 🔒 Lock · 📸 Screenshot · ⏹ Stop boost (restores everything immediately)
 
 ## Also
+- **App shortcuts**: long-press the ZukuBoost icon to launch one of your games boosted
+- **Command log** (Settings → System): every command sent through Shizuku and the system's answer;
+  ⚠ marks commands the phone refused – copy it and send it when something doesn't work
+- **Crash reports**: if the app crashes, the report (with the last commands) is offered on the next start
+- New adaptive Arena icon (with a monochrome version for themed icons), haptic feedback on buttons
 - Launch screen with an animated boost sequence
 - Cleaner: RAM and app cache (`pm trim-caches`, gallery thumbnails, log)
 - Gaming obstacles check (Force 4x MSAA, Don't keep activities, debug overlays…) with one-tap fix

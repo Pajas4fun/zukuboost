@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
     private val shizukuState = mutableStateOf(Shell.State.NOT_RUNNING)
     private val resumeTick = mutableIntStateOf(0)
+    private val pendingLaunch = mutableStateOf<String?>(null)
 
     private val binderReceived = Shizuku.OnBinderReceivedListener { refresh() }
     private val binderDead = Shizuku.OnBinderDeadListener { refresh() }
@@ -70,6 +71,7 @@ class MainActivity : ComponentActivity() {
         Shizuku.addBinderReceivedListenerSticky(binderReceived)
         Shizuku.addBinderDeadListener(binderDead)
         Shizuku.addRequestPermissionResultListener(permResult)
+        pendingLaunch.value = intent?.getStringExtra(Shortcuts.EXTRA_LAUNCH)
         setContent {
             ZukuTheme {
                 MainScreen(
@@ -78,9 +80,17 @@ class MainActivity : ComponentActivity() {
                     onRequestShizuku = {
                         if (Shell.state() == Shell.State.NO_PERMISSION) Shizuku.requestPermission(100)
                     },
+                    pendingLaunch = pendingLaunch.value,
+                    onLaunchHandled = { pendingLaunch.value = null },
                 )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intent.getStringExtra(Shortcuts.EXTRA_LAUNCH)?.let { pendingLaunch.value = it }
     }
 
     override fun onResume() {
@@ -222,6 +232,8 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     var selected by mutableStateOf(prefs.lastGame)
     var historyTick by mutableIntStateOf(0)
     var launch by mutableStateOf<LaunchUi?>(null)
+    var showLog by mutableStateOf(false)
+    var crashReport by mutableStateOf(readCrash(ctx))
     var device by mutableStateOf<DeviceProfile?>(null)
     var obstacles by mutableStateOf<List<BoostEngine.Obstacle>?>(null)
 
@@ -281,6 +293,7 @@ class UiState(val ctx: Context, private val scope: CoroutineScope, private val s
     fun updateGames(v: Set<String>) {
         games = v
         prefs.games = v
+        Shortcuts.update(ctx, v)
         if (killList.any { it in v }) updateKill(killList - v)
     }
 
@@ -441,7 +454,13 @@ private val TABS = listOf(
 )
 
 @Composable
-fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
+fun MainScreen(
+    shizuku: Shell.State,
+    tick: Int,
+    onRequestShizuku: () -> Unit,
+    pendingLaunch: String? = null,
+    onLaunchHandled: () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -450,7 +469,18 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
 
     LaunchedEffect(Unit) {
         s.ensureDefaultKeep()
+        Shortcuts.update(ctx, s.games)
         s.apps = withContext(Dispatchers.IO) { loadApps(ctx) }
+    }
+
+    // Spuštění ze zkratky na ikoně (podržíš ikonu ZukuBoostu → hra)
+    LaunchedEffect(pendingLaunch, s.apps) {
+        val pkg = pendingLaunch
+        if (pkg != null && s.apps != null) {
+            onLaunchHandled()
+            s.selected = pkg
+            s.launchGame(pkg)
+        }
     }
 
     LaunchedEffect(tick, shizuku) {
@@ -504,6 +534,13 @@ fun MainScreen(shizuku: Shell.State, tick: Int, onRequestShizuku: () -> Unit) {
             }
             s.busy?.let { BusyOverlay(it) }
             s.launch?.let { LaunchOverlay(it) }
+            if (s.showLog) CommandLogScreen { s.showLog = false }
+            s.crashReport?.let { report ->
+                CrashDialog(report) {
+                    clearCrash(ctx)
+                    s.crashReport = null
+                }
+            }
         }
     }
 }

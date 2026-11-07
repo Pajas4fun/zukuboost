@@ -97,13 +97,63 @@ object Shell {
     }
 
     /** Spustí příkaz (lze řetězit přes ;) a vrátí stdout + stderr. Při chybě vyhodí výjimku. */
-    suspend fun exec(cmd: String): String = withContext(Dispatchers.IO) {
-        val s = connect()
+    /**
+     * Spustí příkaz. log = false pro časté měřicí dotazy (FPS, senzory), aby nezahltily log příkazů.
+     */
+    suspend fun exec(cmd: String, log: Boolean = true): String = withContext(Dispatchers.IO) {
+        val t0 = System.nanoTime()
         try {
-            s.exec(cmd) ?: ""
-        } catch (e: RemoteException) {
-            reset()
-            throw IllegalStateException("The Shizuku connection dropped")
+            val s = connect()
+            val out = try {
+                s.exec(cmd) ?: ""
+            } catch (e: RemoteException) {
+                reset()
+                throw IllegalStateException("The Shizuku connection dropped")
+            }
+            if (log) CmdLog.add(cmd, out, (System.nanoTime() - t0) / 1_000_000, error = null)
+            out
+        } catch (e: IllegalStateException) {
+            if (log) CmdLog.add(cmd, "", (System.nanoTime() - t0) / 1_000_000, error = e.message ?: "error")
+            throw e
+        }
+    }
+}
+
+/** Záznam příkazu pro obrazovku „Command log“ a hlášení pádů. */
+data class LogEntry(val time: Long, val cmd: String, val out: String, val ms: Long, val error: String?) {
+    /** Systém příkaz odmítl nebo neznal – nejčastější důvod, proč nějaký tweak nefunguje. */
+    val warning: Boolean
+        get() = error != null || listOf("Exception", "Error:", "denied", "not allowed", "Unknown command", "not found")
+            .any { out.contains(it, ignoreCase = true) }
+}
+
+object CmdLog {
+    private const val MAX = 300
+    private val items = ArrayDeque<LogEntry>()
+
+    @Synchronized
+    fun add(cmd: String, out: String, ms: Long, error: String?) {
+        items.addLast(LogEntry(System.currentTimeMillis(), cmd, out.trim().take(600), ms, error))
+        while (items.size > MAX) items.removeFirst()
+    }
+
+    /** Nejnovější první. */
+    @Synchronized
+    fun all(): List<LogEntry> = items.toList().asReversed()
+
+    @Synchronized
+    fun clear() = items.clear()
+
+    /** Text pro schránku / hlášení pádu. */
+    fun text(limit: Int = MAX): String {
+        val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
+        return all().take(limit).joinToString("\n\n") { e ->
+            buildString {
+                append("[").append(fmt.format(java.util.Date(e.time))).append("] ")
+                append(if (e.warning) "⚠ " else "✓ ").append(e.ms).append(" ms\n$ ").append(e.cmd)
+                if (e.error != null) append("\n! ").append(e.error)
+                if (e.out.isNotBlank()) append("\n").append(e.out)
+            }
         }
     }
 }

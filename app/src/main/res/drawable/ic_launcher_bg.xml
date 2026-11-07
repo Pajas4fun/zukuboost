@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Void pozadí -->
+    <path android:fillColor="#07080F" android:pathData="M0,0h108v108h-108z" />
+    <!-- šikmé plazmové pruhy (rychlost) -->
+    <path android:fillColor="#26FF3D6E" android:pathData="M-10,108L40,0h10L0,108z" />
+    <path android:fillColor="#1A8B6CFF" android:pathData="M58,108L108,0h10L68,108z" />
+    <!-- HUD rohy -->
+    <path android:fillColor="#38E8FF" android:pathData="M26,26h10v2.5h-7.5v7.5h-2.5z" />
+    <path android:fillColor="#38E8FF" android:pathData="M82,82h-10v-2.5h7.5v-7.5h2.5z" />
+</vector>

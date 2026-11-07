@@ -25,7 +25,7 @@ class FpsMeter(private val pkg: String) {
             return null
         }
         val quoted = l.replace("'", "'\\''")
-        val out = Shell.exec("dumpsys SurfaceFlinger --latency '$quoted'")
+        val out = Shell.exec("dumpsys SurfaceFlinger --latency '$quoted'", log = false)
         val now = System.nanoTime()
 
         // 1. řádek je perioda displeje, dál: desiredPresent actualPresent frameReady
@@ -52,7 +52,7 @@ class FpsMeter(private val pkg: String) {
     }
 
     private suspend fun findLayer(): String? {
-        val layers = Shell.exec("dumpsys SurfaceFlinger --list")
+        val layers = Shell.exec("dumpsys SurfaceFlinger --list", log = false)
             .lines().map { it.trim() }
             .filter { it.contains(pkg) && !it.contains("Background") }
         return layers.lastOrNull { it.startsWith("SurfaceView") && it.contains("BLAST") }
@@ -66,7 +66,7 @@ class FpsMeter(private val pkg: String) {
             timestatsOn = true
             return null
         }
-        val out = Shell.exec("dumpsys SurfaceFlinger --timestats -dump -clear")
+        val out = Shell.exec("dumpsys SurfaceFlinger --timestats -dump -clear", log = false)
         return out.split("layerName = ")
             .filter { it.contains(pkg) }
             .mapNotNull { avgRe.find(it)?.groupValues?.get(1)?.toFloatOrNull() }

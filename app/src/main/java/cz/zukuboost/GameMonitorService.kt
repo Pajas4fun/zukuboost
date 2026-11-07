@@ -44,6 +44,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         const val ACTION_TOUCH_LOCK = "cz.zukuboost.TOUCH_LOCK"
         const val ACTION_SCREENSHOT = "cz.zukuboost.SCREENSHOT"
         const val ACTION_RECORD = "cz.zukuboost.RECORD"
+        const val ACTION_STOP = "cz.zukuboost.STOP"
 
         // Krátké přepnutí do těchto appek (přihlášení, systémová lišta…) neukončí boost
         private val IGNORED = setOf(
@@ -78,6 +79,10 @@ class GameMonitorService : Service(), GamePanelController.Listener {
     private var panel: GamePanelController? = null
     // Živá data pro herní panel
     @Volatile private var lastFps: Int? = null
+    @Volatile private var lastPing: Int? = null
+    private var pingTick = 0
+    private var batStart = -1
+    private var stoppedGame: String? = null
     @Volatile private var lastCpu: Float? = null
     @Volatile private var lastBat = 0f
     private val fpsHistory = ArrayDeque<Int>()
@@ -137,6 +142,11 @@ class GameMonitorService : Service(), GamePanelController.Listener {
             ACTION_TOUCH_LOCK -> toggleTouchLock()
             ACTION_SCREENSHOT -> takeScreenshot()
             ACTION_RECORD -> toggleRecording()
+            ACTION_STOP -> scope.launch {
+                // Vrátí vše hned; stejná hra se znovu nezboostuje, dokud ji neopustíš
+                stoppedGame = activeGame
+                deactivate()
+            }
         }
         return START_STICKY
     }
@@ -221,6 +231,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
             bat = bat,
             history = hist,
             measuring = overlayJob?.isActive == true,
+            ping = lastPing,
         )
     }
 
@@ -299,7 +310,10 @@ class GameMonitorService : Service(), GamePanelController.Listener {
             // Bez přístupu k využití (systém ho odebral) nevíme, co je v popředí – boost raději vrátíme
             val canSee = hasUsageAccess(this)
             if (!canSee) lastForeground = null
-            val target = if (canSee && !paused && power.isInteractive && fg != null && fg in prefs.games) fg else null
+            val candidate = if (canSee && !paused && power.isInteractive && fg != null && fg in prefs.games) fg else null
+            // „Stop boost“ z notifikace platí, dokud hru neopustíš
+            if (stoppedGame != null && fg != stoppedGame) stoppedGame = null
+            val target = if (candidate != null && candidate == stoppedGame) null else candidate
             val active = activeGame
 
             when {
@@ -393,6 +407,10 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         applied = false
         leftSince = 0L
         sessionStart = SystemClock.elapsedRealtime()
+        batStart = runCatching {
+            getSystemService(android.os.BatteryManager::class.java).getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        }.getOrDefault(-1)
+        lastPing = null
         session.reset()
         tryApply(pkg)
         if (prefs.opt(Opt.THERMAL)) startThermalGuard()
@@ -464,6 +482,14 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                     drops = session.drops,
                     maxCpu = session.maxCpu,
                     maxBat = session.maxBat,
+                    avgPing = session.avgPing,
+                    maxPing = session.maxPing,
+                    batUsed = run {
+                        val bm = getSystemService(android.os.BatteryManager::class.java)
+                        val now = runCatching { bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY) }.getOrDefault(-1)
+                        // jen když se mezitím nenabíjelo (jinak by číslo nedávalo smysl)
+                        if (batStart > 0 && now in 0..batStart && !bm.isCharging) batStart - now else null
+                    },
                 )
             )
         }
@@ -513,6 +539,8 @@ class GameMonitorService : Service(), GamePanelController.Listener {
             var chargeWarned = false
             var hotStreak = 0 // kolikrát po sobě bylo nad hranicí – krátká špička chlazení nespustí
             val bm = getSystemService(android.os.BatteryManager::class.java)
+            // Ručně zvolené Hz (např. 120) chlazení nikdy nesníží
+            val keepHz = prefs.hzMode > 0
             while (isActive) {
                 delay(10_000)
                 val t = batteryTemp(this@GameMonitorService)
@@ -531,15 +559,18 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 when {
                     t >= hot2 && hotStreak >= 2 && coolLevel < 2 -> {
                         coolLevel = 2
-                        runCatching { BoostEngine.setSessionHz(this@GameMonitorService, low) }
+                        if (!keepHz) runCatching { BoostEngine.setSessionHz(this@GameMonitorService, low) }
                         if (brightnessBeforeCool == null) {
                             brightnessBeforeCool = runCatching { BoostEngine.dimBrightness(0.85f) }.getOrNull()
                             prefs.coolBrightness = brightnessBeforeCool
                         }
                         lastChange = now
-                        setStatus("🧊 Cooling: ${low.toInt()} Hz, brightness −15 % · battery ${t.toInt()} °C")
+                        setStatus(
+                            if (keepHz) "🧊 Cooling: brightness −15 % · battery ${t.toInt()} °C"
+                            else "🧊 Cooling: ${low.toInt()} Hz, brightness −15 % · battery ${t.toInt()} °C"
+                        )
                     }
-                    t >= hot1 && hotStreak >= 3 && coolLevel < 1 -> {
+                    t >= hot1 && hotStreak >= 3 && coolLevel < 1 && !keepHz -> {
                         coolLevel = 1
                         val step = rates.filter { it < base - 1f && it >= low }.maxOrNull() ?: low
                         runCatching { BoostEngine.setSessionHz(this@GameMonitorService, step) }
@@ -548,7 +579,9 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                     }
                     t <= coolBack && coolLevel > 0 -> {
                         coolLevel = 0
-                        if (prefs.opt(Opt.REFRESH)) {
+                        if (keepHz) {
+                            // Hz jsme neměnili
+                        } else if (prefs.opt(Opt.REFRESH)) {
                             runCatching { BoostEngine.setSessionHz(this@GameMonitorService, base) }
                         } else {
                             runCatching { BoostEngine.restoreHz(this@GameMonitorService) } // zpět na systémové Hz
@@ -564,49 +597,6 @@ class GameMonitorService : Service(), GamePanelController.Listener {
         }
     }
 
-    /**
-     * Automatické Hz: po ~30 vzorcích zjistí, kolik FPS hra reálně dává (95. percentil),
-     * a nastaví nejnižší Hz, které ho pokryje. Jen jednou za hru, jen bez FPS limitu.
-     */
-    private suspend fun maybeAutoHz(pkg: String, samples: List<Int>) {
-        if (!prefs.opt(Opt.AUTO_HZ) || !prefs.opt(Opt.REFRESH) || prefs.fpsCap(pkg) > 0 || prefs.hzMode > 0) return
-        if (coolLevel > 0) return // během chlazení řídí Hz chlazení
-        val now = SystemClock.elapsedRealtime()
-        // Prvních 90 s je často lobby / načítání s nízkým FPS – podle toho Hz nesnižujeme
-        if (now - sessionStart < 90_000 || now < autoHzCooldownUntil || samples.size < 30) return
-        val rates = BoostEngine.refreshRates(this)
-        val max = rates.maxOrNull() ?: return
-        val recent = samples.takeLast(45)
-
-        if (autoHzApplied > 0f) {
-            // Hra narazila na strop snížených Hz (např. po lobby přešla na 120 FPS) → vrátit maximum
-            val last10 = recent.takeLast(10)
-            // Zvedáme jen když hra dřív běžela znatelně pod sníženými Hz a teď na ně naráží
-            // (hra, která si sama drží 90 FPS, na 90 Hz zůstane – jinak by Hz skákaly sem a tam)
-            val wantsMore = autoHzBaseline <= autoHzApplied - 5f
-            if (wantsMore && last10.size == 10 && last10.count { it >= autoHzApplied - 2f } >= 8) {
-                autoHzApplied = 0f
-                baseHz = max
-                autoHzCooldownUntil = now + 120_000
-                runCatching { BoostEngine.setSessionHz(this@GameMonitorService, max) }
-                setStatus("Boost active: ${label(pkg)} · game wants more FPS → ${max.toInt()} Hz")
-            }
-            return
-        }
-
-        val sorted = recent.sorted()
-        val p95 = sorted[((sorted.size - 1) * 0.95).toInt()]
-        // Nejnižší Hz, které pokryjí skutečné FPS (tolerance 2 FPS na nepřesnost měření):
-        // hra na 90 FPS → 90 Hz (rovnoměrné snímky), hra na 60 → 60 Hz
-        val target = rates.filter { it >= p95 - 2f }.minOrNull() ?: max
-        if (target < max - 1f) {
-            autoHzApplied = target
-            autoHzBaseline = p95.toFloat()
-            baseHz = target
-            runCatching { BoostEngine.setSessionHz(this@GameMonitorService, target) }
-            setStatus("Boost active: ${label(pkg)} · game ~$p95 FPS → ${target.toInt()} Hz")
-        }
-    }
 
     /** Měření FPS a teplot; overlay se zobrazí jen když je zapnutý. */
     private suspend fun startMeasure(pkg: String, forceOverlay: Boolean = false) {
@@ -625,12 +615,15 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 while (isActive) {
                     val fps = runCatching { meter.sample() }.getOrNull()
                     if (fps != null) session.add(fps)
+                    if (pingTick++ % 3 == 0) {
+                        lastPing = PingMeter.measure()
+                        lastPing?.let { session.addPing(it) }
+                    }
                     if (fps != null && fps > 0) {
                         recentFps += fps
                         if (recentFps.size > 120) recentFps.removeAt(0) // stačí poslední ~2 minuty
                     }
-                    maybeAutoHz(pkg, recentFps)
-                    val text = stats.format(fps, session, SystemClock.elapsedRealtime() - sessionStart)
+                    val text = stats.format(fps, session, SystemClock.elapsedRealtime() - sessionStart, lastPing)
                     lastFps = fps
                     lastCpu = stats.cpuTemp
                     lastBat = stats.lastBatTemp
@@ -715,7 +708,7 @@ class GameMonitorService : Service(), GamePanelController.Listener {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             builder.addAction(0, "📸 Screenshot", action(ACTION_SCREENSHOT, 2))
-            builder.addAction(0, if (recording) "⏹ Stop" else "⏺ Record", action(ACTION_RECORD, 3))
+            builder.addAction(0, "⏹ Stop boost", action(ACTION_STOP, 4))
         }
         return builder.build()
     }
